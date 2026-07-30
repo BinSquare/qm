@@ -100,6 +100,7 @@ import { createMemoryFileArtifactStore, type FileArtifactStore } from "./files/f
 import { createPostgresFileArtifactStore } from "./files/postgres-file-artifact-store.ts";
 import { createAwsSandbox, type StoredMicrovm } from "./sandbox/aws-sandbox.ts";
 import { createLocalSandbox } from "./sandbox/local-sandbox.ts";
+import { createSmolSandbox } from "./sandbox/smol-sandbox.ts";
 import { createSpritesSandbox } from "./sandbox/sprites-sandbox.ts";
 import {
   createSandboxRouter,
@@ -566,6 +567,14 @@ export function buildApp(
       ...config.localSandbox,
       onError: sandboxOnError,
     });
+  const buildSmol = (): Sandbox => {
+    const { allowedHosts, ...rest } = config.smolSandbox;
+    return createSmolSandbox(workspace, {
+      ...rest,
+      ...(allowedHosts?.length ? { network: { allowedHosts } } : {}),
+      onError: sandboxOnError,
+    });
+  };
   const buildSprites = (): Sandbox =>
     createSpritesSandbox(workspace, {
       ...config.spritesSandbox,
@@ -591,6 +600,7 @@ export function buildApp(
   };
   const buildBackend: Record<Config["sandboxBackend"], () => Sandbox> = {
     local: buildLocal,
+    smol: buildSmol,
     sprites: buildSprites,
     aws: buildAws,
   };

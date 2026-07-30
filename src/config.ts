@@ -30,8 +30,8 @@ export interface Config {
   databaseUrl?: string;
   harness: "mock" | "pi" | "opencode" | "codex" | "claude";
   securityPosture: SecurityPosture;
-  sandboxBackend: "aws" | "local" | "sprites";
-  sandboxSecondaryBackend?: "aws" | "local" | "sprites";
+  sandboxBackend: "aws" | "local" | "sprites" | "smol";
+  sandboxSecondaryBackend?: "aws" | "local" | "sprites" | "smol";
   deployProvider: "docker" | "aws";
   egressServiceHosts?: string[];
   brandingDefault?: { accent?: string; mark?: string; selfLabel?: string };
@@ -139,6 +139,7 @@ export interface Config {
   eagerProvisionEnabled: boolean;
   awsSandbox: AwsSandboxEnv;
   localSandbox: LocalSandboxEnv;
+  smolSandbox: SmolSandboxEnv;
   spritesSandbox: SpritesSandboxEnv;
   awsDeploy: AwsDeployEnv;
 }
@@ -237,12 +238,51 @@ function awsSandboxEnv(env: NodeJS.ProcessEnv): AwsSandboxEnv {
   };
 }
 
+interface SmolSandboxEnv {
+  apiKey?: string;
+  baseUrl?: string;
+  image?: string;
+  cpus?: number;
+  memoryMb?: number;
+  defaultTimeoutSec?: number;
+  allowedHosts?: string[];
+  runtimes?: string[];
+  tools?: string[];
+}
+
 interface LocalSandboxEnv {
   image?: string;
   dockerBin?: string;
   cpus?: number;
   memoryMb?: number;
   defaultTimeoutSec?: number;
+}
+
+const csv = (v: string | undefined): string[] =>
+  (v ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+function smolSandboxEnv(env: NodeJS.ProcessEnv): SmolSandboxEnv {
+  const hosts = csv(env.SMOL_SANDBOX_ALLOWED_HOSTS);
+  return {
+    ...(env.SMOL_API_KEY ? { apiKey: env.SMOL_API_KEY } : {}),
+    ...(env.SMOL_API_URL ? { baseUrl: env.SMOL_API_URL } : {}),
+    ...(env.SMOL_SANDBOX_IMAGE ? { image: env.SMOL_SANDBOX_IMAGE } : {}),
+    ...(numEnvStrict("SMOL_SANDBOX_CPUS", env.SMOL_SANDBOX_CPUS) !== undefined
+      ? { cpus: numEnvStrict("SMOL_SANDBOX_CPUS", env.SMOL_SANDBOX_CPUS) }
+      : {}),
+    ...(numEnvStrict("SMOL_SANDBOX_MEMORY_MB", env.SMOL_SANDBOX_MEMORY_MB) !== undefined
+      ? { memoryMb: numEnvStrict("SMOL_SANDBOX_MEMORY_MB", env.SMOL_SANDBOX_MEMORY_MB) }
+      : {}),
+    ...(numEnvStrict("SANDBOX_TIMEOUT_SEC", env.SANDBOX_TIMEOUT_SEC) !== undefined
+      ? { defaultTimeoutSec: numEnvStrict("SANDBOX_TIMEOUT_SEC", env.SANDBOX_TIMEOUT_SEC) }
+      : {}),
+    ...(hosts.length ? { allowedHosts: hosts } : {}),
+    ...(csv(env.SMOL_SANDBOX_RUNTIMES).length ? { runtimes: csv(env.SMOL_SANDBOX_RUNTIMES) } : {}),
+    ...(csv(env.SMOL_SANDBOX_TOOLS).length ? { tools: csv(env.SMOL_SANDBOX_TOOLS) } : {}),
+  };
 }
 
 function localSandboxEnv(env: NodeJS.ProcessEnv): LocalSandboxEnv {
@@ -474,8 +514,10 @@ function harnessEnvStrict(value: string | undefined): Config["harness"] {
 function sandboxBackendEnvStrict(value: string | undefined, name = "SANDBOX_BACKEND"): Config["sandboxBackend"] {
   if (value === undefined || value.trim() === "") return "local";
   const backend = value.trim();
-  if (backend === "aws" || backend === "local" || backend === "sprites") return backend;
-  throw new Error(`${name}=${JSON.stringify(value)} is not recognized — use aws, local, or sprites, or unset it.`);
+  if (backend === "aws" || backend === "local" || backend === "sprites" || backend === "smol") return backend;
+  throw new Error(
+    `${name}=${JSON.stringify(value)} is not recognized — use aws, local, smol, or sprites, or unset it.`,
+  );
 }
 
 function secretsBackendEnvStrict(value: string | undefined, prefix: string): Config["secretsBackend"] {
@@ -849,6 +891,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     eagerProvisionEnabled: boolEnvStrict("EAGER_PROVISION", env.EAGER_PROVISION) ?? false,
     awsSandbox: awsSandboxEnv(env),
     localSandbox: localSandboxEnv(env),
+    smolSandbox: smolSandboxEnv(env),
     spritesSandbox: spritesSandboxEnv(env),
     awsDeploy: awsDeployEnv(env),
   };

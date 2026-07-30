@@ -132,6 +132,13 @@ export const FIRST_PARTY_SECRET_SPECS: readonly SecretSpec[] = [
     generate: "sprite login   # then copy the token from ~/.sprite/credentials",
   },
   {
+    name: "SMOL_API_KEY",
+    service: "core",
+    required: { when: { kind: "env-equals", service: "core", name: "SANDBOX_BACKEND", value: "smol" } },
+    description: "smol machines API key for the agent-computer substrate.",
+    generate: "create an API key in the smolmachines console",
+  },
+  {
     name: "DATABASE_URL",
     service: "core",
     required: { when: { kind: "target", target: "aws" } },
