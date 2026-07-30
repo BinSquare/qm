@@ -122,6 +122,20 @@ function egressResources(net: SmolNetwork | undefined): {
   return { network: true };
 }
 
+/**
+ * The wire shape of the egress block, for the raw create path.
+ *
+ * The SDK derives this from `resources` (see `egressResources`); a raw POST has to spell it
+ * out. Both must agree, so keep them adjacent.
+ */
+function networkBody(net: SmolNetwork | undefined): Record<string, unknown> {
+  if (net?.blocked) return { mode: "blocked" };
+  const hosts = [...(net?.allowedHosts ?? [])];
+  const cidrs = [...(net?.allowedCidrs ?? [])];
+  if (hosts.length || cidrs.length) return { mode: "allowCidrs", hosts, cidrs };
+  return { mode: "open" };
+}
+
 /** A missing file must read back as `null`, not as a thrown error. */
 function isNotFound(e: unknown): boolean {
   const msg = errMessage(e).toLowerCase();
@@ -189,14 +203,7 @@ export function createSmolApi(opts: SmolApiOptions): SmolApi {
    * (measured ~11s), so the caller can create, start, upload and launch inside that window.
    */
   async function createRaw(create: SmolCreateOptions): Promise<SmolMachine> {
-    const net = create.network;
-    const hosts = [...(net?.allowedHosts ?? [])];
-    const cidrs = [...(net?.allowedCidrs ?? [])];
-    const network = net?.blocked
-      ? { mode: "blocked" }
-      : hosts.length || cidrs.length
-        ? { mode: "allowCidrs", hosts, cidrs }
-        : { mode: "open" };
+    const network = networkBody(create.network);
     const body = {
       name: create.name,
       source: { type: "image", reference: create.image },
