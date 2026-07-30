@@ -128,6 +128,34 @@ export function createSmolApi(opts: SmolApiOptions): SmolApi {
     return m;
   };
 
+  /**
+   * Resume a stopped machine.
+   *
+   * The SDK has `stop()` and `delete()` but no `start()`, so a parked computer cannot be
+   * brought back through it at all — and `waitUntilReady()` does not start one either, it
+   * throws on a stopped state. Parking is this backend's whole persistence story
+   * (`resident_disk`), so the resume path has to go straight to the REST endpoint.
+   */
+  async function startRaw(id: string): Promise<void> {
+    const path = `/v1/machines/${encodeURIComponent(id)}/start`;
+    let res: Response;
+    try {
+      res = await fetchImpl(`${baseUrl}${path}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${opts.apiKey}` },
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch (e) {
+      throw new Error(`smol api ${path} unreachable: ${errMessage(e)}`, { cause: e });
+    }
+    // Starting an already-started machine is a no-op fast-path (200), so two callers racing
+    // to wake the same computer both succeed. A 409 is tolerated for the same reason: the
+    // desired end state is "running", and someone else having got there first is not a
+    // failure.
+    if (res.status === 409) return;
+    if (res.status < 200 || res.status >= 300) throw new SmolApiError(res.status, path, await res.text());
+  }
+
   async function listRaw(): Promise<Record<string, unknown>[]> {
     let res: Response;
     try {
@@ -192,11 +220,15 @@ export function createSmolApi(opts: SmolApiOptions): SmolApi {
     },
 
     async startMachine(id: string): Promise<void> {
-      // `waitUntilReady` both starts a stopped machine and waits out a start already in
-      // flight, which is the race the hand-rolled client had to poll around. It is needed
-      // after `create` too: despite the SDK doc saying a cloud create returns ready, a
-      // freshly created machine reports state "started" with ready() false.
-      await (await handle(id)).waitUntilReady();
+      const m = await handle(id);
+      // Start first, then wait. `waitUntilReady()` THROWS on a stopped machine rather than
+      // starting it, so waiting alone would strand every parked computer at
+      // "stopped, not yet ready" forever. Issue the start whenever the machine is not
+      // already running; `startRaw` treats an already-started 409 as success.
+      if ((await m.state()) !== "running") await startRaw(id);
+      // Still required after a start (and after `create`, despite the SDK doc): the state
+      // reaches "started" while the guest agent is still booting and exec would fail.
+      await m.waitUntilReady();
     },
 
     async stopMachine(id: string): Promise<void> {

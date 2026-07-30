@@ -173,3 +173,23 @@ test("an allow-list turns on domain egress enforcement", () => {
 test("constructing without an api key or client is refused", () => {
   assert.throws(() => createSmolSandbox(workspace), /SMOL_API_KEY/);
 });
+
+test("a parked machine is STARTED again on the next provision, not just waited on", async () => {
+  const api = fakeApi();
+  const sbx = sandboxFor(api);
+
+  const first = await sbx.provision(rw("personal:resume"));
+  await sbx.teardown(first); // default teardown parks it
+  assert.equal(api.machines.get(first.id)?.state, "stopped");
+
+  api.calls.length = 0;
+  const again = await sbx.provision(rw("personal:resume"));
+  assert.equal(again.id, first.id, "must reuse the parked machine");
+  assert.equal(api.machines.get(first.id)?.state, "started", "the parked machine must be running again");
+  assert.ok(
+    api.calls.some((c) => c.op === "start" && c.arg === first.id),
+    "resume must issue a start — waiting alone strands a stopped machine forever",
+  );
+  // And it must still be usable, which is the symptom a caller actually sees.
+  assert.equal((await sbx.run(again, "true")).code, 0);
+});
