@@ -1,9 +1,19 @@
+import { Machine } from "smolmachines";
 import { errMessage } from "../util/errors.ts";
 
 /**
- * Minimal client for the smol machines control plane. Deliberately dependency-free
- * (plain `fetch`) so the sandbox backend does not pull an SDK whose version has to be
- * kept in lockstep with the fleet — the handful of routes used here are stable.
+ * Thin adapter over the official `smolmachines` SDK, exposing only what the sandbox
+ * backend needs.
+ *
+ * Going through the SDK rather than hand-rolling HTTP keeps the wire shapes the vendor's
+ * problem. The hand-rolled client this replaced sent `cpus`/`memoryMb` at the top level
+ * where the API nests them under `resources`; the server accepted that with a 200 and
+ * silently ignored it, so every computer came up at the fallback size.
+ *
+ * One REST call remains. The SDK addresses machines by id (`Machine.connect`) and the
+ * control plane does not resolve names — `GET /v1/machines/<name>` is a 404 — but a
+ * scope's computer has to be findable by its stable name across process restarts, so
+ * listing is the only way to map name to id.
  */
 
 export const SMOL_DEFAULT_BASE_URL = "https://api.smolmachines.com";
@@ -38,7 +48,6 @@ export interface SmolCreateOptions {
 export interface SmolExecOptions {
   command: string;
   timeoutSec: number;
-  stdin?: string;
   signal?: AbortSignal;
 }
 
@@ -56,6 +65,8 @@ export interface SmolApi {
   stopMachine(id: string): Promise<void>;
   deleteMachine(id: string): Promise<void>;
   exec(id: string, opts: SmolExecOptions): Promise<SmolExecResult>;
+  readFile(id: string, path: string): Promise<Uint8Array | null>;
+  writeFile(id: string, path: string, data: Uint8Array): Promise<void>;
 }
 
 export class SmolApiError extends Error {
@@ -67,60 +78,73 @@ export class SmolApiError extends Error {
   }
 }
 
+const asBytes = (b: Uint8Array | undefined): Uint8Array => (b ? new Uint8Array(b) : new Uint8Array(0));
+
 /**
- * The control plane serializes `network` as a tagged union on `mode`. `blocked` also
- * blocks the in-guest image pull, so it is only ever sent when explicitly requested.
+ * Egress belongs under `resources`, not at the top level of the machine config: the SDK
+ * derives the wire `network` block from `resources.network` / `allowHosts` / `allowCidrs`
+ * and ignores anything else. A top-level `network` object is accepted by the type cast and
+ * then silently dropped — the allow-list would go unenforced while the profile still
+ * claimed `egressEnforcement: "domain"`.
+ *
+ * `network: false` is the SDK default, so "no allow-list" must say `network: true`
+ * explicitly rather than leaving egress to a default.
  */
-function networkBody(net: SmolNetwork | undefined): unknown {
-  if (net?.blocked) return { mode: "blocked" };
-  const hosts = net?.allowedHosts ?? [];
-  const cidrs = net?.allowedCidrs ?? [];
-  if (!hosts.length && !cidrs.length) return { mode: "open" };
-  return { mode: "allowCidrs", hosts: [...hosts], cidrs: [...cidrs] };
+function egressResources(net: SmolNetwork | undefined): {
+  network?: boolean;
+  allowHosts?: string[];
+  allowCidrs?: string[];
+} {
+  if (net?.blocked) return { network: false };
+  const allowHosts = [...(net?.allowedHosts ?? [])];
+  const allowCidrs = [...(net?.allowedCidrs ?? [])];
+  if (allowHosts.length || allowCidrs.length) return { allowHosts, allowCidrs };
+  return { network: true };
 }
 
-const b64ToBytes = (s: string | undefined): Uint8Array =>
-  s ? new Uint8Array(Buffer.from(s, "base64")) : new Uint8Array(0);
+/** A missing file must read back as `null`, not as a thrown error. */
+function isNotFound(e: unknown): boolean {
+  const msg = errMessage(e).toLowerCase();
+  return msg.includes("no such file") || msg.includes("not found") || msg.includes("enoent");
+}
 
 export function createSmolApi(opts: SmolApiOptions): SmolApi {
   const baseUrl = (opts.baseUrl ?? SMOL_DEFAULT_BASE_URL).replace(/\/+$/, "");
   const fetchImpl = opts.fetchImpl ?? fetch;
+  const conn = { target: "cloud" as const, apiKey: opts.apiKey, baseUrl };
 
-  async function call(
-    method: string,
-    path: string,
-    body?: unknown,
-    timeoutMs = 60_000,
-    signal?: AbortSignal,
-  ): Promise<{ status: number; text: string }> {
-    const signals = [AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])];
+  // Each `connect` is a round trip and the backend touches the same computer many times
+  // within one turn, so keep the handles. A failed connect must not poison the cache.
+  const handles = new Map<string, Promise<Machine>>();
+  const handle = (id: string): Promise<Machine> => {
+    let m = handles.get(id);
+    if (!m) {
+      m = Machine.connect(id, conn).catch((e: unknown) => {
+        handles.delete(id);
+        throw e;
+      });
+      handles.set(id, m);
+    }
+    return m;
+  };
+
+  async function listRaw(): Promise<Record<string, unknown>[]> {
     let res: Response;
     try {
-      res = await fetchImpl(`${baseUrl}${path}`, {
-        method,
-        headers: {
-          authorization: `Bearer ${opts.apiKey}`,
-          ...(body === undefined ? {} : { "content-type": "application/json" }),
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        signal: AbortSignal.any(signals),
+      res = await fetchImpl(`${baseUrl}/v1/machines`, {
+        headers: { authorization: `Bearer ${opts.apiKey}` },
+        signal: AbortSignal.timeout(60_000),
       });
     } catch (e) {
-      throw new Error(`smol api ${path} unreachable: ${errMessage(e)}`);
+      throw new Error(`smol api /v1/machines unreachable: ${errMessage(e)}`, { cause: e });
     }
-    return { status: res.status, text: await res.text() };
-  }
-
-  async function callOk(
-    method: string,
-    path: string,
-    body?: unknown,
-    timeoutMs?: number,
-    signal?: AbortSignal,
-  ): Promise<string> {
-    const r = await call(method, path, body, timeoutMs, signal);
-    if (r.status < 200 || r.status >= 300) throw new SmolApiError(r.status, path, r.text);
-    return r.text;
+    const text = await res.text();
+    if (res.status < 200 || res.status >= 300) throw new SmolApiError(res.status, "/v1/machines", text);
+    const parsed: unknown = JSON.parse(text);
+    const rows = Array.isArray(parsed)
+      ? parsed
+      : ((parsed as { machines?: unknown[] }).machines ?? (parsed as { data?: unknown[] }).data ?? []);
+    return rows as Record<string, unknown>[];
   }
 
   const asMachine = (m: Record<string, unknown>): SmolMachine => ({
@@ -131,87 +155,89 @@ export function createSmolApi(opts: SmolApiOptions): SmolApi {
 
   return {
     async listMachines(): Promise<SmolMachine[]> {
-      const text = await callOk("GET", "/v1/machines");
-      const parsed: unknown = JSON.parse(text);
-      const rows = Array.isArray(parsed)
-        ? parsed
-        : ((parsed as { machines?: unknown[] }).machines ?? (parsed as { data?: unknown[] }).data ?? []);
-      return (rows as Record<string, unknown>[]).map(asMachine);
+      return (await listRaw()).map(asMachine);
     },
 
     async getMachine(id: string): Promise<SmolMachine | null> {
-      const r = await call("GET", `/v1/machines/${encodeURIComponent(id)}`);
-      if (r.status === 404) return null;
-      if (r.status < 200 || r.status >= 300) throw new SmolApiError(r.status, `/v1/machines/${id}`, r.text);
-      return asMachine(JSON.parse(r.text) as Record<string, unknown>);
+      try {
+        const m = await handle(id);
+        return { id, name: m.name ?? null, state: await m.state() };
+      } catch (e) {
+        if (isNotFound(e)) {
+          handles.delete(id);
+          return null;
+        }
+        throw e;
+      }
     },
 
     async createMachine(create: SmolCreateOptions): Promise<SmolMachine> {
-      const text = await callOk(
-        "POST",
-        "/v1/machines",
-        {
-          name: create.name,
-          source: { type: "image", reference: create.image },
-          network: networkBody(create.network),
-          // Sizing is nested under `resources`; sending cpus/memoryMb at the top level is
-          // silently ignored and the machine comes up with fleet defaults instead.
-          ...(create.cpus || create.memoryMb
-            ? {
-                resources: {
-                  ...(create.cpus ? { cpus: create.cpus } : {}),
-                  ...(create.memoryMb ? { memoryMb: create.memoryMb } : {}),
-                },
-              }
-            : {}),
+      const config = {
+        name: create.name,
+        image: create.image,
+        resources: {
+          ...(create.cpus ? { cpus: create.cpus } : {}),
+          ...(create.memoryMb ? { memoryMb: create.memoryMb } : {}),
+          ...egressResources(create.network),
         },
-        180_000,
-      );
-      return asMachine(JSON.parse(text) as Record<string, unknown>);
+      };
+      const m = await Machine.create(config, conn);
+      // `Machine` exposes only `name`, but every other call addresses machines by id, so
+      // the id has to come back from a listing. Cold start only.
+      const state = await m.state();
+      const created = (await listRaw()).map(asMachine).find((row) => row.name === create.name);
+      if (!created) throw new Error(`smol api: created machine ${create.name} did not appear in the listing`);
+      handles.set(created.id, Promise.resolve(m));
+      return { ...created, state };
     },
 
     async startMachine(id: string): Promise<void> {
-      await callOk("POST", `/v1/machines/${encodeURIComponent(id)}/start`, {}, 180_000);
+      // `waitUntilReady` both starts a stopped machine and waits out a start already in
+      // flight, which is the race the hand-rolled client had to poll around. It is needed
+      // after `create` too: despite the SDK doc saying a cloud create returns ready, a
+      // freshly created machine reports state "started" with ready() false.
+      await (await handle(id)).waitUntilReady();
     },
 
     async stopMachine(id: string): Promise<void> {
-      await callOk("POST", `/v1/machines/${encodeURIComponent(id)}/stop`, {}, 120_000);
+      await (await handle(id)).stop();
     },
 
     async deleteMachine(id: string): Promise<void> {
-      const r = await call("DELETE", `/v1/machines/${encodeURIComponent(id)}`, undefined, 120_000);
-      if (r.status === 404) return;
-      if (r.status < 200 || r.status >= 300) throw new SmolApiError(r.status, `/v1/machines/${id}`, r.text);
+      try {
+        await (await handle(id)).delete();
+      } catch (e) {
+        if (!isNotFound(e)) throw e;
+      } finally {
+        handles.delete(id);
+      }
     },
 
     async exec(id: string, execOpts: SmolExecOptions): Promise<SmolExecResult> {
-      const text = await callOk(
-        "POST",
-        `/v1/machines/${encodeURIComponent(id)}/exec`,
-        {
-          command: execOpts.command,
-          timeoutSeconds: execOpts.timeoutSec,
-          ...(execOpts.stdin === undefined ? {} : { stdin: execOpts.stdin }),
-        },
-        (execOpts.timeoutSec + 30) * 1000,
-        execOpts.signal,
-      );
-      const j = JSON.parse(text) as {
-        exitCode?: number;
-        stdoutB64?: string;
-        stderrB64?: string;
-        stdout?: string;
-        stderr?: string;
-      };
-      // `stdout`/`stderr` are lossy and capped; the b64 fields are byte-exact. Fall back
-      // only when the fleet omitted them (older nodes), where truncation is possible.
+      const m = await handle(id);
+      // The backend composes shell scripts — pipes, redirection, `&&` — so hand the whole
+      // string to a shell rather than splitting it into argv.
+      const r = await m.exec(["sh", "-c", execOpts.command], { timeout: execOpts.timeoutSec });
+      // The `*Bytes` fields, not the strings: the cloud caps text `stdout`/`stderr` at
+      // 1 MiB and replaces invalid UTF-8, while these stay byte-exact and untruncated.
       return {
-        stdout:
-          j.stdoutB64 === undefined ? new Uint8Array(Buffer.from(j.stdout ?? "", "utf8")) : b64ToBytes(j.stdoutB64),
-        stderr:
-          j.stderrB64 === undefined ? new Uint8Array(Buffer.from(j.stderr ?? "", "utf8")) : b64ToBytes(j.stderrB64),
-        exitCode: j.exitCode ?? 0,
+        stdout: asBytes(r.stdoutBytes),
+        stderr: asBytes(r.stderrBytes),
+        exitCode: r.exitCode ?? 0,
       };
+    },
+
+    async readFile(id: string, path: string): Promise<Uint8Array | null> {
+      try {
+        return asBytes(await (await handle(id)).readFile(path));
+      } catch (e) {
+        if (isNotFound(e)) return null;
+        throw e;
+      }
+    },
+
+    async writeFile(id: string, path: string, data: Uint8Array): Promise<void> {
+      await (await handle(id)).writeFile(path, data);
     },
   };
 }

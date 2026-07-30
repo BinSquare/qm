@@ -17,16 +17,14 @@ interface FakeCall {
 }
 
 /**
- * Stands in for the control plane. `exec` understands only the handful of shell forms the
- * backend emits, which is what makes the chunked read/write paths verifiable without a VM.
+ * Stands in for the control plane. File transfer is a first-class API call, so the fake
+ * backs it with a map instead of having to emulate the shell forms the backend once emitted.
  */
 function fakeApi(): SmolApi & { calls: FakeCall[]; machines: Map<string, SmolMachine>; files: Map<string, Buffer> } {
   const machines = new Map<string, SmolMachine>();
   const files = new Map<string, Buffer>();
   const calls: FakeCall[] = [];
   let seq = 0;
-
-  const unq = (s: string): string => s.replace(/^'|'$/g, "").replace(/'\\''/g, "'");
 
   return {
     calls,
@@ -59,45 +57,22 @@ function fakeApi(): SmolApi & { calls: FakeCall[]; machines: Map<string, SmolMac
       calls.push({ op: "delete", arg: id });
       machines.delete(id);
     },
-    async exec(_id, o: SmolExecOptions) {
-      const ok = (out: Buffer | string = "") => ({
-        stdout: new Uint8Array(Buffer.isBuffer(out) ? out : Buffer.from(out)),
-        stderr: new Uint8Array(0),
-        exitCode: 0,
-      });
-      const cmd = o.command;
-
-      let m = /^: > (.+)$/.exec(cmd);
-      if (m) {
-        files.set(unq(m[1]!), Buffer.alloc(0));
-        return ok();
-      }
-      m = /^base64 -d >> (.+)$/.exec(cmd);
-      if (m) {
-        const p = unq(m[1]!);
-        files.set(p, Buffer.concat([files.get(p) ?? Buffer.alloc(0), Buffer.from(o.stdin ?? "", "base64")]));
-        return ok();
-      }
-      m = /^\[ -f (.+?) \] \|\| exit 66; stat -c %s (.+)$/.exec(cmd);
-      if (m) {
-        const f = files.get(unq(m[1]!));
-        if (!f) return { stdout: new Uint8Array(0), stderr: new Uint8Array(0), exitCode: 66 };
-        return ok(`${f.length}\n`);
-      }
-      m = /^tail -c \+(\d+) (.+?) \| head -c (\d+)$/.exec(cmd);
-      if (m) {
-        const f = files.get(unq(m[2]!)) ?? Buffer.alloc(0);
-        const start = Number(m[1]) - 1;
-        return ok(f.subarray(start, start + Number(m[3])));
-      }
-      // mkdir / provision prep / anything else the backend runs for effect only
-      return ok();
+    async exec(_id: string, _o: SmolExecOptions) {
+      // Every command the backend still emits is run for effect only — mkdir, credential
+      // links, read-only layer materialisation. File *content* no longer rides the shell.
+      return { stdout: new Uint8Array(0), stderr: new Uint8Array(0), exitCode: 0 };
+    },
+    async readFile(_id: string, path: string) {
+      const f = files.get(path);
+      return f ? new Uint8Array(f) : null;
+    },
+    async writeFile(_id: string, path: string, data: Uint8Array) {
+      files.set(path, Buffer.from(data));
     },
   };
 }
 
-const sandboxFor = (api: SmolApi, chunk = 8) =>
-  createSmolSandbox(workspace, { api, transferChunkBytes: chunk, homeDir: "/root" });
+const sandboxFor = (api: SmolApi) => createSmolSandbox(workspace, { api, homeDir: "/root" });
 
 test("provision creates a machine named for the scope, then reuses it", async () => {
   const api = fakeApi();
@@ -145,20 +120,20 @@ test("teardown parks by default, destroys on request, and keepWarm does neither"
   assert.equal(api.machines.has(doomed.id), false, "destroy must delete the machine");
 });
 
-test("file round-trip survives chunking and preserves bytes", async () => {
+test("file round-trip preserves bytes, text and binary alike", async () => {
   const api = fakeApi();
-  const sbx = sandboxFor(api, 8); // tiny chunk so a small payload still spans many execs
+  const sbx = sandboxFor(api);
 
   const h = await sbx.provision(rw("personal:files"));
   await sbx.writeFile(h, "notes/hello.txt", "hello world");
   assert.equal(await sbx.readFile(h, "notes/hello.txt"), "hello world");
 
-  // Binary, non-UTF8, and larger than several chunks.
+  // Binary and non-UTF8 — the case a text-only transfer path would corrupt.
   const blob = new Uint8Array(1000);
   for (let i = 0; i < blob.length; i++) blob[i] = (i * 31) % 256;
   await sbx.writeFileBytes(h, "blob.bin", blob);
   const back = await sbx.readFileBytes(h, "blob.bin");
-  assert.deepEqual(back && [...back], [...blob], "chunked write/read must be byte-exact");
+  assert.deepEqual(back && [...back], [...blob], "write/read must be byte-exact");
 });
 
 test("empty file writes and reads back as empty, not missing", async () => {

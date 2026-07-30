@@ -13,7 +13,7 @@ Node host, a container without a mounted socket, or inside another microVM.
 | QM concept         | smol equivalent                                        |
 | ------------------ | ------------------------------------------------------ |
 | scope's computer   | one machine named `qm-sbx-<slug>`                      |
-| `execute` tool     | `POST /v1/machines/:id/exec`                           |
+| `execute` tool     | `machine.exec()`                                       |
 | parked computer    | machine `stopped` — its disk persists                  |
 | destroyed computer | machine deleted                                        |
 | scratch computer   | machine named `qm-scratch-<slug>`, deleted on teardown |
@@ -24,10 +24,10 @@ tools the agent installed are still there on the next turn. `destroy: true` dele
 
 There is no in-guest daemon. The `local` backend runs an HTTP exec daemon inside the
 container and talks to it over a published port; here the control plane already exposes
-exec, so file reads and writes are ordinary shell commands (`base64 -d`, `tail -c`) whose
-payloads ride the documented byte-exact `stdoutB64` / `stdin` fields. Transfers are chunked
-(`TRANSFER_CHUNK_BYTES`, 3 MiB of raw content per exec) so a large file does not need one
-oversized frame.
+exec and file transfer, so the backend goes through the official [`smolmachines`](https://www.npmjs.com/package/smolmachines)
+SDK — `machine.exec()` for commands, `machine.readFile()` / `machine.writeFile()` for
+content. Files move as bytes over the SDK's own transfer path rather than being marshalled
+through the shell, so binary payloads need no encoding and no chunking.
 
 ## Configuration
 

@@ -29,13 +29,6 @@ const WORKSPACE_BASENAME = "workspace";
 const RO_LAYERS_TAR = ".ro-layers.tar";
 const RO_LAYERS_MANIFEST = ".ro-layers.manifest";
 
-/**
- * Bytes of *raw* file content moved per exec. Base64 inflates by 4/3, so the encoded
- * payload stays comfortably under the guest agent's frame ceiling. Files larger than
- * this are streamed in several appends/reads rather than failing.
- */
-export const TRANSFER_CHUNK_BYTES = 3 * 1024 * 1024;
-
 export interface SmolSandboxOptions extends Partial<SmolApiOptions> {
   apiKey?: string;
   image?: string;
@@ -53,8 +46,6 @@ export interface SmolSandboxOptions extends Partial<SmolApiOptions> {
   runtimes?: string[];
   tools?: string[];
   notInstalled?: string[];
-  /** Override the per-exec transfer size. Exposed for tests; production uses the default. */
-  transferChunkBytes?: number;
   api?: SmolApi;
   onError?: (e: { category: string; code: string; message: string; scopeLabel?: string }) => void;
 }
@@ -89,7 +80,6 @@ export function createSmolSandbox(workspace: WorkspaceStore, opts: SmolSandboxOp
   const defaultTimeoutSec = opts.defaultTimeoutSec ?? 600;
   const homeDir = opts.homeDir ?? HOME_DIR;
   const workspaceDir = `${homeDir}/${WORKSPACE_BASENAME}`;
-  const chunkBytes = opts.transferChunkBytes ?? TRANSFER_CHUNK_BYTES;
   const provisionQueue = createKeyedQueue<string>();
 
   const idByName = new Map<string, string>();
@@ -183,49 +173,11 @@ export function createSmolSandbox(workspace: WorkspaceStore, opts: SmolSandboxOp
     const dir = absPath.slice(0, Math.max(0, absPath.lastIndexOf("/"))) || "/";
     const mk = await execRaw(id, `mkdir -p ${shq(dir)}`, 30);
     if (mk.code !== 0) throw new Error(`smol sandbox mkdir ${dir} failed: ${mk.stderr.slice(0, 200)}`);
-
-    // Truncate first, then append chunk by chunk, so a large file needs neither a huge
-    // single frame nor a temp file on the guest.
-    const truncate = await execRaw(id, `: > ${shq(absPath)}`, 30);
-    if (truncate.code !== 0) throw new Error(`smol sandbox write ${absPath} failed: ${truncate.stderr.slice(0, 200)}`);
-
-    for (let off = 0; off < data.length || (off === 0 && data.length === 0); off += chunkBytes) {
-      const chunk = data.subarray(off, Math.min(off + chunkBytes, data.length));
-      const r = await api.exec(id, {
-        command: `base64 -d >> ${shq(absPath)}`,
-        timeoutSec: 120,
-        stdin: Buffer.from(chunk).toString("base64"),
-      });
-      if (r.exitCode !== 0)
-        throw new Error(
-          `smol sandbox write ${absPath} failed: ${Buffer.from(r.stderr).toString("utf8").slice(0, 200)}`,
-        );
-      if (data.length === 0) break;
-    }
+    await api.writeFile(id, absPath, data);
   }
 
   async function readAbsBytes(id: string, absPath: string): Promise<Uint8Array | null> {
-    // 66 is chosen to be distinguishable from a shell/`cat` failure so a missing file
-    // reads back as null rather than an error.
-    const sized = await execRaw(id, `[ -f ${shq(absPath)} ] || exit 66; stat -c %s ${shq(absPath)}`, 60);
-    if (sized.code === 66) return null;
-    if (sized.code !== 0) throw new Error(`smol sandbox read ${absPath} failed: ${sized.stderr.slice(0, 200)}`);
-    const size = Number(sized.stdout.trim());
-    if (!Number.isFinite(size)) throw new Error(`smol sandbox read ${absPath}: unexpected size ${sized.stdout.trim()}`);
-    if (size === 0) return new Uint8Array(0);
-
-    const parts: Uint8Array[] = [];
-    for (let off = 0; off < size; off += chunkBytes) {
-      const count = Math.min(chunkBytes, size - off);
-      const r = await api.exec(id, {
-        command: `tail -c +${off + 1} ${shq(absPath)} | head -c ${count}`,
-        timeoutSec: 120,
-      });
-      if (r.exitCode !== 0)
-        throw new Error(`smol sandbox read ${absPath} failed: ${Buffer.from(r.stderr).toString("utf8").slice(0, 200)}`);
-      parts.push(r.stdout);
-    }
-    return Buffer.concat(parts.map((p) => Buffer.from(p)));
+    return api.readFile(id, absPath);
   }
 
   function teardownQueueKey(handle: SandboxHandle): string {
