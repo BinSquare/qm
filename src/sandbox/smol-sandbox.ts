@@ -106,33 +106,38 @@ export function createSmolSandbox(workspace: WorkspaceStore, opts: SmolSandboxOp
     return found.id;
   }
 
-  async function waitStarted(id: string): Promise<void> {
-    const deadline = Date.now() + 120_000;
+  /**
+   * Drive a machine to `started`, tolerating a start already in flight.
+   *
+   * Creating a machine also brings it up, so firing `/start` immediately afterwards races
+   * that in-flight start and the node rejects the second request. Poll instead, and only
+   * issue an explicit start once the machine has actually settled while stopped.
+   */
+  async function bringUp(id: string): Promise<void> {
+    const deadline = Date.now() + 180_000;
+    let requestedStart = false;
     let last = "";
     while (Date.now() < deadline) {
       const m = await api.getMachine(id);
       if (!m) throw new Error(`smol sandbox machine ${id} disappeared while starting`);
-      if (m.state === "started") return;
-      if (m.state === "failed") throw new Error(`smol sandbox machine ${id} failed to start`);
       last = m.state;
-      await sleep(400);
+      if (m.state === "started") return;
+      if (m.state === "error" || m.state === "failed") {
+        throw new Error(`smol sandbox machine ${id} failed to start (state: ${m.state})`);
+      }
+      if (m.state === "stopped" && !requestedStart) {
+        requestedStart = true;
+        await api.startMachine(id);
+      }
+      await sleep(500);
     }
     throw new Error(`smol sandbox machine ${id} never reached "started" (last state: ${last})`);
-  }
-
-  /** Idempotent: a machine already `started` is left alone. */
-  async function ensureStarted(id: string): Promise<void> {
-    const m = await api.getMachine(id);
-    if (!m) throw new Error(`smol sandbox machine ${id} is gone`);
-    if (m.state === "started") return;
-    await api.startMachine(id);
-    await waitStarted(id);
   }
 
   async function ensureMachine(name: string, scope: string | undefined): Promise<{ id: string; coldStart: boolean }> {
     const existing = await findByName(name);
     if (existing) {
-      await ensureStarted(existing);
+      await bringUp(existing);
       if (scope) scopeById.set(existing, scope);
       return { id: existing, coldStart: false };
     }
@@ -145,10 +150,7 @@ export function createSmolSandbox(workspace: WorkspaceStore, opts: SmolSandboxOp
     });
     idByName.set(name, created.id);
     if (scope) scopeById.set(created.id, scope);
-    if (created.state !== "started") {
-      await api.startMachine(created.id);
-      await waitStarted(created.id);
-    }
+    await bringUp(created.id);
     return { id: created.id, coldStart: true };
   }
 
@@ -250,7 +252,7 @@ export function createSmolSandbox(workspace: WorkspaceStore, opts: SmolSandboxOp
   const procIo: ExecProcessIo = {
     async run(handle, command, execOpts): Promise<ExecResult> {
       const timeoutSec = execOpts?.timeoutMs ? Math.ceil(execOpts.timeoutMs / 1000) : defaultTimeoutSec;
-      await ensureStarted(handle.id);
+      await bringUp(handle.id);
       return execRaw(handle.id, command, timeoutSec);
     },
   };
@@ -327,7 +329,7 @@ export function createSmolSandbox(workspace: WorkspaceStore, opts: SmolSandboxOp
 
     async run(handle, command, execOpts?: ExecOptions): Promise<ExecResult> {
       const timeoutSec = execOpts?.timeoutMs ? Math.ceil(execOpts.timeoutMs / 1000) : defaultTimeoutSec;
-      await ensureStarted(handle.id);
+      await bringUp(handle.id);
       const exports = Object.entries(handle.env ?? {})
         .map(([k, v]) => `export ${k}=${shq(v)}`)
         .join("; ");

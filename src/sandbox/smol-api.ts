@@ -154,8 +154,16 @@ export function createSmolApi(opts: SmolApiOptions): SmolApi {
           name: create.name,
           source: { type: "image", reference: create.image },
           network: networkBody(create.network),
-          ...(create.cpus ? { cpus: create.cpus } : {}),
-          ...(create.memoryMb ? { memoryMb: create.memoryMb } : {}),
+          // Sizing is nested under `resources`; sending cpus/memoryMb at the top level is
+          // silently ignored and the machine comes up with fleet defaults instead.
+          ...(create.cpus || create.memoryMb
+            ? {
+                resources: {
+                  ...(create.cpus ? { cpus: create.cpus } : {}),
+                  ...(create.memoryMb ? { memoryMb: create.memoryMb } : {}),
+                },
+              }
+            : {}),
         },
         180_000,
       );
