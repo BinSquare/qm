@@ -28,6 +28,8 @@ export interface SmolMachine {
   id: string;
   name: string | null;
   state: string;
+  /** The machine's app URL, present once it publishes a port. */
+  url?: string;
 }
 
 /** `allowedHosts` empty means unrestricted; a non-empty list is enforced by the fleet. */
@@ -43,6 +45,17 @@ export interface SmolCreateOptions {
   cpus?: number;
   memoryMb?: number;
   network?: SmolNetwork;
+  /** Guest ports to publish. Required for a machine that serves HTTP. */
+  ports?: number[];
+  /**
+   * Wait for the machine to report READY before returning (default true).
+   *
+   * Readiness for a port-publishing machine includes "the published port accepts
+   * connections", which cannot happen before the workload is uploaded — and the upload
+   * needs the machine first. Set false to break that circle: the machine still exists and
+   * its agent still comes up, so the caller can poll for what it actually needs.
+   */
+  waitForReady?: boolean;
 }
 
 export interface SmolExecOptions {
@@ -61,12 +74,19 @@ export interface SmolApi {
   listMachines(): Promise<SmolMachine[]>;
   getMachine(id: string): Promise<SmolMachine | null>;
   createMachine(opts: SmolCreateOptions): Promise<SmolMachine>;
-  startMachine(id: string): Promise<void>;
+  /**
+   * Start a machine. `waitForReady: false` returns once the start is issued — needed for a
+   * machine publishing a port whose workload is not installed yet, since readiness there
+   * includes the port answering.
+   */
+  startMachine(id: string, opts?: { waitForReady?: boolean }): Promise<void>;
   stopMachine(id: string): Promise<void>;
   deleteMachine(id: string): Promise<void>;
   exec(id: string, opts: SmolExecOptions): Promise<SmolExecResult>;
   readFile(id: string, path: string): Promise<Uint8Array | null>;
   writeFile(id: string, path: string, data: Uint8Array): Promise<void>;
+  /** Grant account-less access to this machine's published app URL. */
+  makePublic(id: string): Promise<string | null>;
 }
 
 export class SmolApiError extends Error {
@@ -156,6 +176,53 @@ export function createSmolApi(opts: SmolApiOptions): SmolApi {
     if (res.status < 200 || res.status >= 300) throw new SmolApiError(res.status, path, await res.text());
   }
 
+  /**
+   * Create a machine WITHOUT waiting for readiness.
+   *
+   * `Machine.create` blocks until the machine reports ready, and for a machine that
+   * publishes a port readiness includes "the port accepts connections" — which cannot
+   * happen before its workload is installed, and installing needs the machine. Worse, the
+   * control plane REAPS a machine that never becomes ready, so waiting does not merely
+   * time out, it destroys the machine (verified: the id 404s afterwards).
+   *
+   * Exec, however, works as soon as the guest agent is up and long before the port answers
+   * (measured ~11s), so the caller can create, start, upload and launch inside that window.
+   */
+  async function createRaw(create: SmolCreateOptions): Promise<SmolMachine> {
+    const net = create.network;
+    const hosts = [...(net?.allowedHosts ?? [])];
+    const cidrs = [...(net?.allowedCidrs ?? [])];
+    const network = net?.blocked
+      ? { mode: "blocked" }
+      : hosts.length || cidrs.length
+        ? { mode: "allowCidrs", hosts, cidrs }
+        : { mode: "open" };
+    const body = {
+      name: create.name,
+      source: { type: "image", reference: create.image },
+      resources: {
+        ...(create.cpus ? { cpus: create.cpus } : {}),
+        ...(create.memoryMb ? { memoryMb: create.memoryMb } : {}),
+      },
+      network,
+      ...(create.ports?.length ? { ports: create.ports.map((port) => ({ port })) } : {}),
+    };
+    let res: Response;
+    try {
+      res = await fetchImpl(`${baseUrl}/v1/machines`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${opts.apiKey}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch (e) {
+      throw new Error(`smol api /v1/machines unreachable: ${errMessage(e)}`, { cause: e });
+    }
+    const text = await res.text();
+    if (res.status < 200 || res.status >= 300) throw new SmolApiError(res.status, "/v1/machines", text);
+    return asMachine(JSON.parse(text) as Record<string, unknown>);
+  }
+
   async function listRaw(): Promise<Record<string, unknown>[]> {
     let res: Response;
     try {
@@ -179,6 +246,7 @@ export function createSmolApi(opts: SmolApiOptions): SmolApi {
     id: String(m.id ?? ""),
     name: typeof m.name === "string" ? m.name : null,
     state: String(m.state ?? "unknown"),
+    ...(typeof m.url === "string" && m.url ? { url: m.url } : {}),
   });
 
   return {
@@ -208,7 +276,10 @@ export function createSmolApi(opts: SmolApiOptions): SmolApi {
           ...(create.memoryMb ? { memoryMb: create.memoryMb } : {}),
           ...egressResources(create.network),
         },
+        // Only the guest port matters on cloud — the control plane allocates the host side.
+        ...(create.ports?.length ? { ports: create.ports.map((guest) => ({ host: guest, guest })) } : {}),
       };
+      if (create.waitForReady === false) return createRaw(create);
       const m = await Machine.create(config, conn);
       // `Machine` exposes only `name`, but every other call addresses machines by id, so
       // the id has to come back from a listing. Cold start only.
@@ -219,7 +290,11 @@ export function createSmolApi(opts: SmolApiOptions): SmolApi {
       return { ...created, state };
     },
 
-    async startMachine(id: string): Promise<void> {
+    async startMachine(id: string, startOpts?: { waitForReady?: boolean }): Promise<void> {
+      if (startOpts?.waitForReady === false) {
+        await startRaw(id);
+        return;
+      }
       const m = await handle(id);
       // Start first, then wait. `waitUntilReady()` THROWS on a stopped machine rather than
       // starting it, so waiting alone would strand every parked computer at
@@ -270,6 +345,25 @@ export function createSmolApi(opts: SmolApiOptions): SmolApi {
 
     async writeFile(id: string, path: string, data: Uint8Array): Promise<void> {
       await (await handle(id)).writeFile(path, data);
+    },
+
+    async makePublic(id: string): Promise<string | null> {
+      // No SDK method for this; the control plane owns anonymous app ingress.
+      const path = `/v1/machines/${encodeURIComponent(id)}/public`;
+      let res: Response;
+      try {
+        res = await fetchImpl(`${baseUrl}${path}`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${opts.apiKey}` },
+          signal: AbortSignal.timeout(60_000),
+        });
+      } catch (e) {
+        throw new Error(`smol api ${path} unreachable: ${errMessage(e)}`, { cause: e });
+      }
+      const text = await res.text();
+      if (res.status < 200 || res.status >= 300) throw new SmolApiError(res.status, path, text);
+      const parsed = JSON.parse(text) as { url?: unknown };
+      return typeof parsed.url === "string" ? parsed.url : null;
     },
   };
 }

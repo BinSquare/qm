@@ -32,7 +32,7 @@ export interface Config {
   securityPosture: SecurityPosture;
   sandboxBackend: "aws" | "local" | "sprites" | "smol";
   sandboxSecondaryBackend?: "aws" | "local" | "sprites" | "smol";
-  deployProvider: "docker" | "aws";
+  deployProvider: "docker" | "aws" | "smol";
   egressServiceHosts?: string[];
   brandingDefault?: { accent?: string; mark?: string; selfLabel?: string };
   modelId?: string;
@@ -682,7 +682,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const publicApiUrl = env.PUBLIC_API_URL ?? env.AGENT_API_URL;
   const publicUrl = env.PUBLIC_WEB_URL ?? publicApiUrl;
-  const deployProvider: "aws" | "docker" = env.DEPLOY_PROVIDER === "aws" ? "aws" : "docker";
+  const deployProvider: Config["deployProvider"] =
+    env.DEPLOY_PROVIDER === "aws" || env.DEPLOY_PROVIDER === "smol" ? env.DEPLOY_PROVIDER : "docker";
   let runStore: "memory" | "postgres" = env.SESSION_STORE === "postgres" ? "postgres" : "memory";
   if (env.RUN_STORE === "memory" || env.RUN_STORE === "postgres") runStore = env.RUN_STORE;
   const codexProcessEnv = Object.fromEntries(

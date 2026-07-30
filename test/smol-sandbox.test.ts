@@ -88,6 +88,12 @@ function fakeApi(): SmolApi & {
     async writeFile(_id: string, path: string, data: Uint8Array) {
       files.set(path, Buffer.from(data));
     },
+    async makePublic(id: string) {
+      calls.push({ op: "public", arg: id });
+      const m = machines.get(id);
+      if (m) m.url = `https://${m.name ?? id}.apps.example.com`;
+      return m?.url ?? null;
+    },
   };
 }
 

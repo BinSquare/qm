@@ -69,6 +69,7 @@ import { createScheduler, type Scheduler } from "./cron/scheduler.ts";
 import { createPgBossCronQueue } from "./cron/job-queue.ts";
 import { createDeployStore, type Deployment } from "./deploy/deploy-store.ts";
 import { createDockerDeployProvider } from "./deploy/docker-deploy-provider.ts";
+import { createSmolDeployProvider } from "./deploy/smol-deploy-provider.ts";
 import { createAwsDeployProvider, type StoredDeployBody } from "./deploy/aws-deploy-provider.ts";
 import type { DeployProvider } from "./deploy/deploy-provider.ts";
 import { createDeployService } from "./deploy/deploy-service.ts";
@@ -782,17 +783,32 @@ export function buildApp(
         : {}),
     },
   });
-  const deployProvider: DeployProvider =
-    config.deployProvider === "aws"
-      ? createAwsDeployProvider({
-          ...config.awsDeploy,
-          ...(!config.awsDeploy.dataBucket && config.awsSandbox.s3Bucket
-            ? { dataBucket: config.awsSandbox.s3Bucket }
-            : {}),
-          advisoryLock,
-          store: artifactMap<StoredDeployBody>("aws_deploy_bodies"),
-        })
-      : createDockerDeployProvider();
+  const buildDeployProvider = (): DeployProvider => {
+    if (config.deployProvider === "aws") {
+      return createAwsDeployProvider({
+        ...config.awsDeploy,
+        ...(!config.awsDeploy.dataBucket && config.awsSandbox.s3Bucket
+          ? { dataBucket: config.awsSandbox.s3Bucket }
+          : {}),
+        advisoryLock,
+        store: artifactMap<StoredDeployBody>("aws_deploy_bodies"),
+      });
+    }
+    // Deploying onto smol machines needs no Docker daemon on this host — the same reason
+    // the smol sandbox backend exists. The docker provider fails here with
+    // `spawn docker ENOENT`, which reads as a platform outage rather than a missing daemon.
+    if (config.deployProvider === "smol") {
+      return createSmolDeployProvider({
+        apiKey: config.smolSandbox.apiKey ?? "",
+        ...(config.smolSandbox.baseUrl ? { baseUrl: config.smolSandbox.baseUrl } : {}),
+        ...(config.smolSandbox.image ? { image: config.smolSandbox.image } : {}),
+        ...(config.smolSandbox.cpus ? { cpus: config.smolSandbox.cpus } : {}),
+        ...(config.smolSandbox.memoryMb ? { memoryMb: config.smolSandbox.memoryMb } : {}),
+      });
+    }
+    return createDockerDeployProvider();
+  };
+  const deployProvider: DeployProvider = buildDeployProvider();
   if (config.deployProvider === "aws" && !config.awsDeploy.dataBucket && !config.awsSandbox.s3Bucket) {
     console.warn(
       "[wiring] aws deploy: no data bucket resolved (AWS_DEPLOY_DATA_BUCKET unset, sandbox is not aws) — deployed apps have NO durable /data",
