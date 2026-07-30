@@ -176,8 +176,39 @@ export function createSmolSandbox(workspace: WorkspaceStore, opts: SmolSandboxOp
     await api.writeFile(id, absPath, data);
   }
 
+  /**
+   * `exec` and the file-transfer API do NOT share `/tmp`.
+   *
+   * Each gets its own tmpfs: a file `exec` writes to `/tmp/x` is invisible to `readFile`,
+   * and vice versa. Verified live — `exec` can `stat` its own `/tmp` file at 15 bytes while
+   * `readFile` on the identical path returns not-found. The persistent overlay (the home
+   * and workspace tree) IS shared by both.
+   *
+   * That matters because the backup path — which is how a publish reads the workspace back
+   * out — `mktemp`s its tar into `/tmp` via `exec` and then reads it through this function.
+   * Straight `readFile` returns null there and the caller reports "read-back failed".
+   *
+   * So: try the direct read, and if the file API cannot see the path, copy it through the
+   * shared overlay and read that. Staging rather than `cat`-ing over exec keeps this free of
+   * the ~20 MB exec-output ceiling, which a workspace tar can exceed. The staged copy is
+   * made AFTER the tar exists and removed immediately, so it never lands inside an archive.
+   */
   async function readAbsBytes(id: string, absPath: string): Promise<Uint8Array | null> {
-    return api.readFile(id, absPath);
+    const direct = await api.readFile(id, absPath);
+    if (direct !== null) return direct;
+
+    const staged = `${homeDir}/.qm-readback-${Math.random().toString(36).slice(2, 10)}`;
+    const cp = await execRaw(id, `[ -f ${shq(absPath)} ] || exit 66; cp ${shq(absPath)} ${shq(staged)}`, 120);
+    // 66 is our own "the file genuinely does not exist" signal: a missing file must still
+    // read back as null rather than turning into an error.
+    if (cp.code === 66) return null;
+    if (cp.code !== 0)
+      throw new Error(`smol sandbox read-back staging of ${absPath} failed: ${cp.stderr.slice(0, 200)}`);
+    try {
+      return await api.readFile(id, staged);
+    } finally {
+      await execRaw(id, `rm -f ${shq(staged)}`, 60).catch(() => undefined);
+    }
   }
 
   function teardownQueueKey(handle: SandboxHandle): string {
