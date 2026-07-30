@@ -48,6 +48,15 @@ export interface SmolCreateOptions {
   /** Guest ports to publish. Required for a machine that serves HTTP. */
   ports?: number[];
   /**
+   * Idle seconds before the fleet stops the machine.
+   *
+   * Leaving this unset does NOT mean "never": the control plane applies a fleet-wide
+   * default to any machine that publishes a port, on the assumption that such a machine
+   * restarts its workload on boot and so can safely scale to zero. Pass a value explicitly
+   * to opt out of that assumption.
+   */
+  autoStopSeconds?: number;
+  /**
    * Wait for the machine to report READY before returning (default true).
    *
    * Readiness for a port-publishing machine includes "the published port accepts
@@ -213,6 +222,7 @@ export function createSmolApi(opts: SmolApiOptions): SmolApi {
       },
       network,
       ...(create.ports?.length ? { ports: create.ports.map((port) => ({ port })) } : {}),
+      ...(create.autoStopSeconds !== undefined ? { autoStopSeconds: create.autoStopSeconds } : {}),
     };
     let res: Response;
     try {

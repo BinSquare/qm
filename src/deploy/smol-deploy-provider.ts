@@ -18,6 +18,19 @@ import { swallowAs } from "../util/errors.ts";
  */
 
 const APP_PORT = 8080;
+/**
+ * Effectively "never idle-stop this machine" (~10 years).
+ *
+ * A machine that publishes a port and leaves `autoStopSeconds` unset inherits the fleet's
+ * scale-to-zero default. That default is safe for a workload the image starts on boot, but
+ * this provider launches the app as a runtime process into a machine created from a stock
+ * base image — so a stop discards it, and the machine wakes with nothing on the port. The
+ * wake never completes and the app URL hangs on "waking up" forever.
+ *
+ * Opting out is the honest fix until a deployed app can restart itself on boot. There is no
+ * "never" sentinel: any value is a timeout, and 0 would stop the machine immediately.
+ */
+const NO_AUTO_STOP_SECONDS = 315_360_000;
 const APP_DIR = "/app";
 /** Big enough for an app bundle, small enough that a runaway upload fails fast. */
 const MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
@@ -94,6 +107,7 @@ export function createSmolDeployProvider(opts: SmolDeployProviderOptions = {}): 
       name,
       image,
       ports: [APP_PORT],
+      autoStopSeconds: NO_AUTO_STOP_SECONDS,
       // Readiness here means "the app port answers", which it cannot until we have uploaded
       // the app. Wait for the agent instead — see waitForAgent.
       waitForReady: false,
