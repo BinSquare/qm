@@ -10,14 +10,14 @@ Node host, a container without a mounted socket, or inside another microVM.
 
 ## How it maps
 
-| QM concept        | smol equivalent                                    |
-| ----------------- | -------------------------------------------------- |
-| scope's computer  | one machine named `qm-sbx-<slug>`                    |
-| `execute` tool    | `POST /v1/machines/:id/exec`                        |
-| parked computer   | machine `stopped` — its disk persists               |
-| destroyed computer| machine deleted                                     |
-| scratch computer  | machine named `qm-scratch-<slug>`, deleted on teardown |
-| egress policy     | machine network allow-list                          |
+| QM concept         | smol equivalent                                        |
+| ------------------ | ------------------------------------------------------ |
+| scope's computer   | one machine named `qm-sbx-<slug>`                      |
+| `execute` tool     | `POST /v1/machines/:id/exec`                           |
+| parked computer    | machine `stopped` — its disk persists                  |
+| destroyed computer | machine deleted                                        |
+| scratch computer   | machine named `qm-scratch-<slug>`, deleted on teardown |
+| egress policy      | machine network allow-list                             |
 
 Persistence is `resident_disk`: teardown stops the machine rather than deleting it, so
 tools the agent installed are still there on the next turn. `destroy: true` deletes it.
@@ -31,17 +31,17 @@ oversized frame.
 
 ## Configuration
 
-| Variable                     | Meaning                                                     |
-| ---------------------------- | ----------------------------------------------------------- |
-| `SANDBOX_BACKEND=smol`       | select this backend                                          |
-| `SMOL_API_KEY`               | **required** — control-plane API key                         |
-| `SMOL_API_URL`               | override the control plane (default `https://api.smolmachines.com`) |
+| Variable                     | Meaning                                                              |
+| ---------------------------- | -------------------------------------------------------------------- |
+| `SANDBOX_BACKEND=smol`       | select this backend                                                  |
+| `SMOL_API_KEY`               | **required** — control-plane API key                                 |
+| `SMOL_API_URL`               | override the control plane (default `https://api.smolmachines.com`)  |
 | `SMOL_SANDBOX_IMAGE`         | image for each computer (default `docker.io/library/debian:12-slim`) |
-| `SMOL_SANDBOX_CPUS`          | vCPUs per computer                                           |
-| `SMOL_SANDBOX_MEMORY_MB`     | memory per computer                                          |
-| `SMOL_SANDBOX_ALLOWED_HOSTS` | comma-separated egress allow-list; unset means unrestricted  |
-| `SMOL_SANDBOX_RUNTIMES`      | comma-separated runtimes the image ships                     |
-| `SMOL_SANDBOX_TOOLS`         | comma-separated tools the image ships                        |
+| `SMOL_SANDBOX_CPUS`          | vCPUs per computer                                                   |
+| `SMOL_SANDBOX_MEMORY_MB`     | memory per computer                                                  |
+| `SMOL_SANDBOX_ALLOWED_HOSTS` | comma-separated egress allow-list; unset means unrestricted          |
+| `SMOL_SANDBOX_RUNTIMES`      | comma-separated runtimes the image ships                             |
+| `SMOL_SANDBOX_TOOLS`         | comma-separated tools the image ships                                |
 
 ## Choosing an image
 
