@@ -137,9 +137,18 @@ export function createSmolSandbox(workspace: WorkspaceStore, opts: SmolSandboxOp
   async function ensureMachine(name: string, scope: string | undefined): Promise<{ id: string; coldStart: boolean }> {
     const existing = await findByName(name);
     if (existing) {
-      await bringUp(existing);
-      if (scope) scopeById.set(existing, scope);
-      return { id: existing, coldStart: false };
+      // A machine wedged in `error` can never be revived, and it holds the scope's name.
+      // Replace it rather than failing this scope forever; its disk is unrecoverable
+      // either way, so the rebuild is a cold start.
+      const current = await api.getMachine(existing);
+      if (current && (current.state === "error" || current.state === "failed")) {
+        await api.deleteMachine(existing).catch(swallowAs("smol-sandbox: replace errored machine", undefined));
+        idByName.delete(name);
+      } else {
+        await bringUp(existing);
+        if (scope) scopeById.set(existing, scope);
+        return { id: existing, coldStart: false };
+      }
     }
     const created = await api.createMachine({
       name,
