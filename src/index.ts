@@ -30,6 +30,7 @@ const server = createServer(built.app, {
     configuredModelForHarness(config, config.harness),
     baseModelProviders(config),
   ),
+  fastModeEnabled: config.fastModeEnabled,
   modelProviders: modelProviderAvailabilityFor(config.harness, providerKeysPresent(config)),
   providerKeys: providerKeysPresent(config),
   modelCredentials: built.modelCredentials,

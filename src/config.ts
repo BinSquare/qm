@@ -51,6 +51,13 @@ export interface Config {
   openrouterApiKey?: string;
   modelProvider?: ModelProvider;
   piCaptureRequests: boolean;
+  /**
+   * Whether this deployment may serve fast-mode turns. Default OFF: the composer persists
+   * its fast-mode toggle per browser and keeps sending it, so on an org whose fast-mode
+   * limit is zero tokens per minute every such turn 429s. A stale client toggle must not
+   * be able to demand a capability the organization cannot serve.
+   */
+  fastModeEnabled: boolean;
   piSystemCacheSplit: boolean;
   sessionTapeMode: "shadow" | "serve";
   adminGrants?: string;
@@ -772,6 +779,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...(modelProvider ? { modelProvider } : {}),
     ...(env.ADMIN_GRANTS ? { adminGrants: env.ADMIN_GRANTS } : {}),
     piCaptureRequests: boolEnvStrict("PI_CAPTURE_REQUESTS", env.PI_CAPTURE_REQUESTS) ?? true,
+    fastModeEnabled: boolEnvStrict("QM_FAST_MODE", env.QM_FAST_MODE) ?? false,
     piSystemCacheSplit: boolEnvStrict("PI_SYSTEM_CACHE_SPLIT", env.PI_SYSTEM_CACHE_SPLIT) ?? false,
     sessionTapeMode: env.SESSION_TAPE_MODE === "shadow" ? "shadow" : "serve",
     rateLimitPerWindow:

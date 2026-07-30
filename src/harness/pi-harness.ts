@@ -88,6 +88,13 @@ export interface PiHarnessOptions {
   resolveProviderKeys?: () => Promise<ProviderKeys>;
   tempDirPrefix?: string;
   captureRequests?: boolean;
+  /**
+   * Whether this deployment may serve fast-mode turns. Default OFF: the composer persists
+   * its fast-mode toggle per browser and keeps sending it, so on an org whose fast-mode
+   * limit is zero tokens/minute every such turn 429s. A stale client toggle must not be
+   * able to demand a capability the organization cannot serve.
+   */
+  fastModeEnabled?: boolean;
   systemCacheSplit?: boolean;
   scratchExec?: boolean;
   ownerAuthExec?: boolean;
@@ -111,6 +118,7 @@ export function piHarnessConfigOptions(config: Config): PiHarnessOptions {
     ...(config.openaiApiKey ? { openaiApiKey: config.openaiApiKey } : {}),
     ...(config.openrouterApiKey ? { openrouterApiKey: config.openrouterApiKey } : {}),
     captureRequests: config.piCaptureRequests,
+    fastModeEnabled: config.fastModeEnabled,
     systemCacheSplit: config.piSystemCacheSplit,
     ...coreToolOptions(config),
     turnWallClockMs: config.turnWallClockMs,
@@ -1463,7 +1471,7 @@ export function createPiHarness(opts?: PiHarnessOptions): Harness {
           entry.ref.toolApprovalGate = turn.toolApprovalGate;
 
           const desiredModelId = turn.model ?? resolveModelId(turn.scopeLabel);
-          const wantFast = wantsFastMode(turn.fastMode, desiredModelId);
+          const wantFast = opts?.fastModeEnabled === true && wantsFastMode(turn.fastMode, desiredModelId);
           const current = entry.agentSession.model as { id?: string; headers?: Record<string, string> } | undefined;
           const currentFast = Boolean(current?.headers?.["anthropic-beta"]?.includes(FAST_MODE_BETA));
           if (current?.id !== desiredModelId || currentFast !== wantFast) {
@@ -1723,7 +1731,7 @@ export function createPiHarness(opts?: PiHarnessOptions): Harness {
             console.error(
               `[pi] provider refusal — retrying on fallback model ${fromId} -> ${fallbackId} session=${turn.session.id}: ${refusal}`,
             );
-            const wantFast = wantsFastMode(turn.fastMode, fallbackId);
+            const wantFast = opts?.fastModeEnabled === true && wantsFastMode(turn.fastMode, fallbackId);
             await entry.agentSession.setModel(wantFast ? withFastModeHeaders(fallback) : fallback);
             const active = entry.agentSession.model as { headers?: Record<string, string> } | undefined;
             entry.ref.fast = Boolean(active?.headers?.["anthropic-beta"]?.includes(FAST_MODE_BETA));

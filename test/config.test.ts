@@ -409,3 +409,16 @@ test("baseModelProviders constrains the base model only when a provider is decla
     "with no declaration the shipped default stands, so upgrading never moves a deployment's model or its billing",
   );
 });
+
+test("fastModeEnabled is off unless the deployment opts in", () => {
+  // The composer persists its fast-mode toggle per browser and keeps sending it, so on an
+  // org whose fast-mode limit is zero tokens/minute every such turn 429s. Default-off is
+  // what stops a stale client toggle demanding a capability the org cannot serve.
+  assert.equal(loadConfig({}).fastModeEnabled, false, "unset must mean off");
+  for (const off of ["0", "false", "no", "off"]) {
+    assert.equal(loadConfig({ QM_FAST_MODE: off }).fastModeEnabled, false, `${off} must not enable it`);
+  }
+  for (const on of ["1", "true", "yes", "on"]) {
+    assert.equal(loadConfig({ QM_FAST_MODE: on }).fastModeEnabled, true, `${on} must enable it`);
+  }
+});

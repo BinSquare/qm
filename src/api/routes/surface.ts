@@ -1006,7 +1006,11 @@ async function runtimeConfigBody(ctx: ApiCtx, scope: ScopeId): Promise<Record<st
     scopeOverride,
     effective: { harnessId: effective.harnessId, modelId: effective.modelId },
     upgradeAvailable: Boolean(scopeOverride && scopeOverride.orgRevision !== orgDefault.revision),
-    fastModeModelIds: FAST_MODE_MODEL_IDS,
+    // Advertise fast-mode-capable models only where the deployment actually permits fast
+    // mode (`QM_FAST_MODE`). Otherwise the composer shows a toggle whose every use is
+    // rejected by the provider, and — because the toggle is persisted per browser — keeps
+    // being sent long after the user has forgotten they set it.
+    fastModeModelIds: ctx.deps.fastModeEnabled ? FAST_MODE_MODEL_IDS : [],
     interactiveFastMode: await config.getInteractiveFastModeDurable(),
   };
 }

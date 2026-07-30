@@ -77,6 +77,12 @@ export interface ServerDeps {
   brokerFetch?: BrokerFetch;
   gitHttpFetch?: GitHttpFetch;
   baseModelDefault?: string;
+  /**
+   * Whether this deployment may serve fast-mode turns. Drives what the surface advertises
+   * as fast-mode-capable: with it off the composer must not show a toggle whose every use
+   * the provider rejects — and which, being persisted per browser, keeps being sent.
+   */
+  fastModeEnabled?: boolean;
   modelProviders?: ModelProviderAvailability;
   providerKeys?: ModelProviderAvailability;
   modelCredentials?: ModelCredentialStore;
