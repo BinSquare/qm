@@ -460,6 +460,9 @@ export function buildApp(
   const layerSkillsDir = config.deploymentLayerDir ? resolve(deploymentLayer.dir, "skills") : undefined;
   const brokeredTools = deploymentLayer.brokeredTools;
   const orgScope = scopeId("org", config.orgId);
+  // Seed the org's web-ui model allowlist from config at boot. Re-applying it every start
+  // keeps it in force on a memory store, where an admin-set list would not survive a restart.
+  if (config.webuiModels?.length) configStore.setWebuiModels(orgScope, config.webuiModels);
   const auditLog = config.databaseUrl ? createPostgresAuditLog(config.databaseUrl) : createAuditLog();
   const deploymentLayerStore = createDeploymentLayerStore({
     backing: artifactMap<StoredDeploymentLayer>("deployment_layer"),

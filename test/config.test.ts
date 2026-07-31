@@ -422,3 +422,12 @@ test("fastModeEnabled is off unless the deployment opts in", () => {
     assert.equal(loadConfig({ QM_FAST_MODE: on }).fastModeEnabled, true, `${on} must enable it`);
   }
 });
+
+test("WEBUI_MODELS seeds the org web-ui model allowlist (comma-separated, trimmed)", () => {
+  assert.equal(loadConfig({}).webuiModels, undefined, "unset leaves the full catalog (no allowlist)");
+  assert.deepEqual(
+    loadConfig({ WEBUI_MODELS: "openai/gpt-5.6-luna, deepseek/deepseek-v4-flash" }).webuiModels,
+    ["openai/gpt-5.6-luna", "deepseek/deepseek-v4-flash"],
+  );
+  assert.equal(loadConfig({ WEBUI_MODELS: "  ,  " }).webuiModels, undefined, "an all-empty list is treated as unset");
+});

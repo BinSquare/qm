@@ -26,6 +26,8 @@ export interface Config {
   port: number;
   dataDir: string;
   orgId: string;
+  /** Seed the org's web-ui model allowlist at boot (durable even on a memory store). */
+  webuiModels?: string[];
   sessionStore: "memory" | "postgres";
   databaseUrl?: string;
   harness: "mock" | "pi" | "opencode" | "codex" | "claude";
@@ -749,6 +751,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: numEnvStrict("PORT", env.PORT) ?? CONFIG_DEFAULTS.port,
     dataDir,
     orgId: env.ORG_ID ?? DEFAULT_ORG_ID,
+    ...(csv(env.WEBUI_MODELS).length ? { webuiModels: csv(env.WEBUI_MODELS) } : {}),
     sessionStore: env.SESSION_STORE === "postgres" ? "postgres" : "memory",
     ...(env.DATABASE_URL ? { databaseUrl: env.DATABASE_URL } : {}),
     harness: harnessEnvStrict(env.HARNESS),
