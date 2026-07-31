@@ -251,6 +251,14 @@ interface SmolSandboxEnv {
   image?: string;
   cpus?: number;
   memoryMb?: number;
+  /**
+   * Size of a DEPLOYED app's machine, independent of the agent-computer size
+   * (`cpus`/`memoryMb`). A deployed app hosts real traffic and wants headroom;
+   * an agent computer is a throwaway per-scope sandbox. Defaults to 4 vCPU /
+   * 8 GB (`SMOL_DEPLOY_CPUS` / `SMOL_DEPLOY_MEMORY_MB`).
+   */
+  deployCpus?: number;
+  deployMemoryMb?: number;
   defaultTimeoutSec?: number;
   allowedHosts?: string[];
   runtimes?: string[];
@@ -283,6 +291,10 @@ function smolSandboxEnv(env: NodeJS.ProcessEnv): SmolSandboxEnv {
     ...(numEnvStrict("SMOL_SANDBOX_MEMORY_MB", env.SMOL_SANDBOX_MEMORY_MB) !== undefined
       ? { memoryMb: numEnvStrict("SMOL_SANDBOX_MEMORY_MB", env.SMOL_SANDBOX_MEMORY_MB) }
       : {}),
+    // Deployed-app machine size, defaulting to 4 vCPU / 8 GB — deliberately larger
+    // than the agent-computer default, and independent of it.
+    deployCpus: numEnvStrict("SMOL_DEPLOY_CPUS", env.SMOL_DEPLOY_CPUS) ?? 4,
+    deployMemoryMb: numEnvStrict("SMOL_DEPLOY_MEMORY_MB", env.SMOL_DEPLOY_MEMORY_MB) ?? 8192,
     ...(numEnvStrict("SANDBOX_TIMEOUT_SEC", env.SANDBOX_TIMEOUT_SEC) !== undefined
       ? { defaultTimeoutSec: numEnvStrict("SANDBOX_TIMEOUT_SEC", env.SANDBOX_TIMEOUT_SEC) }
       : {}),

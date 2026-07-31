@@ -802,8 +802,10 @@ export function buildApp(
         apiKey: config.smolSandbox.apiKey ?? "",
         ...(config.smolSandbox.baseUrl ? { baseUrl: config.smolSandbox.baseUrl } : {}),
         ...(config.smolSandbox.image ? { image: config.smolSandbox.image } : {}),
-        ...(config.smolSandbox.cpus ? { cpus: config.smolSandbox.cpus } : {}),
-        ...(config.smolSandbox.memoryMb ? { memoryMb: config.smolSandbox.memoryMb } : {}),
+        // Deployed apps get their OWN size (default 4 vCPU / 8 GB), not the small
+        // agent-computer size — a live app serving traffic wants the headroom.
+        ...(config.smolSandbox.deployCpus ? { cpus: config.smolSandbox.deployCpus } : {}),
+        ...(config.smolSandbox.deployMemoryMb ? { memoryMb: config.smolSandbox.deployMemoryMb } : {}),
       });
     }
     return createDockerDeployProvider();
