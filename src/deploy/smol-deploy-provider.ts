@@ -100,12 +100,12 @@ export function createSmolDeployProvider(opts: SmolDeployProviderOptions = {}): 
   };
 
   /** Replace any existing machine for this deployment: a deploy is a fresh app, not a patch. */
-  async function recreate(name: string): Promise<string> {
+  async function recreate(name: string, imageRef: string): Promise<string> {
     const existing = (await api.listMachines()).find((m) => m.name === name);
     if (existing) await api.deleteMachine(existing.id).catch(swallowAs("smol-deploy: replace existing", undefined));
     const created = await api.createMachine({
       name,
-      image,
+      image: imageRef,
       ports: [APP_PORT],
       autoStopSeconds: NO_AUTO_STOP_SECONDS,
       // Readiness here means "the app port answers", which it cannot until we have uploaded
@@ -166,7 +166,11 @@ export function createSmolDeployProvider(opts: SmolDeployProviderOptions = {}): 
 
     async apply(d: Deployment, version: DeploymentVersion): Promise<DeployEndpoint> {
       const name = machineName(d);
-      const id = await recreate(name);
+      // The app declares its own base image; fall back to the provider default only when it
+      // does not. This is what lets a Python app ask for a Python image instead of inheriting
+      // the node-only default and failing at launch.
+      const imageRef = version.image ?? image;
+      const id = await recreate(name, imageRef);
 
       const files = await collectSnapshot(version.snapshotDir);
       if (files.length) {
@@ -194,7 +198,17 @@ export function createSmolDeployProvider(opts: SmolDeployProviderOptions = {}): 
       // The app URL only answers anonymously once the machine is granted public access.
       const publicUrl = (await api.makePublic(id)) ?? (await api.getMachine(id))?.url;
       if (!publicUrl) throw new Error(`smol deploy: machine ${id} has no app URL`);
-      await waitForApp(publicUrl);
+      try {
+        await waitForApp(publicUrl);
+      } catch (e) {
+        // The port never answered. Surface the entrypoint's own output instead of a bare
+        // "did not answer" timeout — a missing interpreter (e.g. `python3: not found`) or a
+        // crash lands in the app log, which is the actual diagnosis.
+        const tail = (await exec(id, `tail -c 800 /var/log/qm-app.log 2>/dev/null`, 30).catch(() => null))?.stdout.trim();
+        throw new Error(`${e instanceof Error ? e.message : String(e)}${tail ? `; last app-log output: ${tail}` : ""}`, {
+          cause: e,
+        });
+      }
 
       const u = new URL(publicUrl);
       return {
@@ -202,7 +216,7 @@ export function createSmolDeployProvider(opts: SmolDeployProviderOptions = {}): 
         port: u.port ? Number(u.port) : 443,
         tls: u.protocol === "https:",
         publicUrl,
-        image,
+        image: imageRef,
       };
     },
 

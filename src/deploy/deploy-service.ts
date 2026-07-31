@@ -35,6 +35,8 @@ export interface DeployInput {
   homeFiles?: DeployFile[];
   name?: string;
   env?: Record<string, string>;
+  /** Base image the app runs on. Falls back to the provider default when unset. */
+  image?: string;
 }
 
 export type Reach = { status: "ok"; endpoint: DeployEndpoint } | { status: "denied" } | { status: "not_found" };
@@ -47,6 +49,8 @@ export interface DeployOrUpdateInput {
   files?: DeployFile[];
   homeFiles?: DeployFile[];
   env?: Record<string, string>;
+  /** Base image the app runs on. Falls back to the provider default when unset. */
+  image?: string;
   renameFrom?: string;
   rollbackTo?: number;
   share?: Array<{ scope: ScopeId; permission: Permission }>;
@@ -63,7 +67,13 @@ export interface DeployService {
   deploy(input: DeployInput): Promise<Deployment>;
   redeploy(
     id: string,
-    input: { entrypoint: string; files: DeployFile[]; homeFiles?: DeployFile[]; env?: Record<string, string> },
+    input: {
+      entrypoint: string;
+      files: DeployFile[];
+      homeFiles?: DeployFile[];
+      env?: Record<string, string>;
+      image?: string;
+    },
   ): Promise<Deployment>;
   getDeployment(idOrName: string): Promise<Deployment | null>;
   listDeployments(): Promise<Deployment[]>;
@@ -332,6 +342,7 @@ export function createDeployService(deps: DeployServiceDeps): DeployService {
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.createdInScope !== undefined ? { createdInScope: input.createdInScope } : {}),
         ...(input.env ? { env: input.env } : {}),
+        ...(input.image ? { image: input.image } : {}),
       });
       const endpoint = await applyVersion(d.id, d.versions[0]!);
       await markVersionRunning(d.id, d.versions[0]!.version, endpoint);
@@ -356,6 +367,7 @@ export function createDeployService(deps: DeployServiceDeps): DeployService {
           files: input.files,
           ...(homeDir ? { homeDir } : {}),
           ...(input.env ? { env: input.env } : {}),
+          ...(input.image ? { image: input.image } : {}),
         });
         const d = await deps.deployStore.get(id);
         if (!d) throw new Error(`unknown deployment: ${id}`);
@@ -578,6 +590,7 @@ export function createDeployService(deps: DeployServiceDeps): DeployService {
             files: input.files,
             ...(input.homeFiles ? { homeFiles: input.homeFiles } : {}),
             ...(input.env ? { env: input.env } : {}),
+            ...(input.image ? { image: input.image } : {}),
           });
           if (input.defaultAudience)
             await reconcileDefaultAudience((await deps.deployStore.get(existing.id))!, input.defaultAudience, false);
@@ -614,6 +627,7 @@ export function createDeployService(deps: DeployServiceDeps): DeployService {
           files,
           ...(input.homeFiles ? { homeFiles: input.homeFiles } : {}),
           ...(input.env ? { env: input.env } : {}),
+          ...(input.image ? { image: input.image } : {}),
         });
         isCreate = false;
       } else {
@@ -626,6 +640,7 @@ export function createDeployService(deps: DeployServiceDeps): DeployService {
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(input.createdInScope !== undefined ? { createdInScope: input.createdInScope } : {}),
           ...(input.env ? { env: input.env } : {}),
+          ...(input.image ? { image: input.image } : {}),
         });
         isCreate = true;
       }

@@ -80,6 +80,8 @@ export interface PublishInput {
   env?: Record<string, string>;
   rollbackTo?: number;
   share?: Array<{ scope: ScopeId; permission: Permission }>;
+  /** Base image the app runs on (e.g. "python:3.12-slim"). Defaults to the provider's image. */
+  image?: string;
 }
 
 export interface PublishAudienceDescriptor {
@@ -705,6 +707,7 @@ export function createToolContext(deps: ToolContextDeps): ToolContext {
           createdInScope,
           files,
           ...(input.entrypoint ? { entrypoint: input.entrypoint } : {}),
+          ...(input.image ? { image: input.image } : {}),
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(input.renameFrom !== undefined ? { renameFrom: input.renameFrom } : {}),
           ...(Object.keys(env).length ? { env } : {}),

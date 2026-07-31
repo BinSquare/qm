@@ -232,3 +232,44 @@ test("a failed redeploy does not move the hosted git current ref", async () => {
   assert.equal(after.appliedVersion, 1);
   assert.equal(await deployStore.refOf(d.id, "refs/heads/current"), v1.commit);
 });
+
+test("a caller-declared base image threads through deploy() to the provider and persists on the version", async () => {
+  const { deploy, deployStore, probe } = flyLikeService();
+  const d = await deploy.deploy({
+    ownerScopeId: owner,
+    createdBy: "U1",
+    entrypoint: "python3 app.py",
+    image: "python:3.12-slim",
+    files: [{ path: "app.py", data: "x" }],
+  });
+  assert.equal(probe.appliedImages[0], "python:3.12-slim", "the provider was handed the declared image, not a default");
+  assert.equal((await deployStore.versionOf(d.id, 1))!.image, "python:3.12-slim");
+});
+
+test("deployOrUpdate (the publish/agent path) carries the declared image to the provider", async () => {
+  const { deploy, probe } = flyLikeService();
+  await deploy.deployOrUpdate({
+    ownerScopeId: owner,
+    createdBy: "U1",
+    name: "pyapp",
+    entrypoint: "python3 app.py",
+    image: "python:3.12-slim",
+    files: [{ path: "app.py", data: "x" }],
+  });
+  assert.equal(probe.appliedImages.at(-1), "python:3.12-slim");
+});
+
+test("each redeploy can change the image; versions keep their own", async () => {
+  const { deploy, deployStore, probe } = flyLikeService();
+  const d = await deploy.deploy({
+    ownerScopeId: owner,
+    createdBy: "U1",
+    entrypoint: "e",
+    image: "img:a",
+    files: [{ path: "f", data: "x" }],
+  });
+  await deploy.redeploy(d.id, { entrypoint: "e", image: "img:b", files: [{ path: "f", data: "y" }] });
+  assert.equal((await deployStore.versionOf(d.id, 1))!.image, "img:a");
+  assert.equal((await deployStore.versionOf(d.id, 2))!.image, "img:b");
+  assert.deepEqual(probe.appliedImages, ["img:a", "img:b"]);
+});

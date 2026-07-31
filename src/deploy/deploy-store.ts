@@ -74,6 +74,7 @@ interface VersionInput {
   homeDir?: string;
   env?: Record<string, string>;
   files?: DeployGitInputFile[];
+  image?: string;
 }
 
 export interface DeployStore {
@@ -149,6 +150,7 @@ export function createDeployStore(backing?: DurableMap<Deployment> | DeployStore
       snapshotDir: input.snapshotDir,
       ...(input.homeDir ? { homeDir: input.homeDir } : {}),
       ...(input.env ? { env: input.env } : {}),
+      ...(input.image ? { image: input.image } : {}),
       ...(commit ? { commit } : {}),
       ...(parentCommit ? { parentCommit } : {}),
     };

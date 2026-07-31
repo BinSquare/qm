@@ -781,7 +781,21 @@ export function createPiTools(ref: ToolContextRef, opts?: PiToolsOptions): ToolD
     parameters: Type.Object({
       dir: Type.Optional(Type.String({ description: "Workspace directory to publish (default: the whole tree)." })),
       entrypoint: Type.Optional(
-        Type.String({ description: 'Command the container runs, relative to the app root, e.g. "node server.js".' }),
+        Type.String({
+          description:
+            'Command the container runs, relative to the app root, e.g. "node server.js". It runs in the ' +
+            "`image` below — the DEFAULT image is a Node.js image (node + npx are present; Python is NOT). " +
+            'For a static site serve it with Node, e.g. "npx --yes serve -l $PORT .". If you need another ' +
+            'runtime (Python, etc.), set `image` to a matching base rather than assuming it is installed.',
+        }),
+      ),
+      image: Type.Optional(
+        Type.String({
+          description:
+            'Base container image the app runs on, e.g. "python:3.12-slim" or "docker.io/library/golang:1.23". ' +
+            "Defaults to the platform's Node.js image. Set this whenever the entrypoint needs a runtime the " +
+            "default image lacks.",
+        }),
       ),
       name: Type.Optional(
         Type.String({
