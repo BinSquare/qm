@@ -136,6 +136,7 @@ test("piHarnessConfigOptions maps every Config knob the harness consumes, field 
     titleModelId: "model-title",
     apiKey: "sk-test",
     captureRequests: false,
+    fastModeEnabled: false,
     systemCacheSplit: true,
     scratchExec: true,
     ownerAuthExec: true,

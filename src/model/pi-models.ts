@@ -3,7 +3,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 
 const getModel = getBuiltinModel as unknown as (provider: string, id: string) => Model<Api> | undefined;
 
-export const DEFAULT_AGENT_MODEL_ID = "claude-opus-5";
+export const DEFAULT_AGENT_MODEL_ID = "openai/gpt-5.6-luna";
 export const DEFAULT_CODEX_MODEL_ID = "gpt-5.6-sol";
 export const THINKING_LEVELS = ["auto", "low", "medium", "high", "xhigh", "max", "ultracode"] as const;
 export const HARNESS_IDS = ["pi", "opencode", "codex", "claude", "mock"] as const;
@@ -86,6 +86,7 @@ export const MODEL_REGISTRY: readonly ModelEntry[] = [
     auxiliary: true,
     clone: { ...GPT_56_CLONE, input: 1, output: 6 },
   },
+  { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna", fastMode: false, webui: true, base: true },
   { id: "openrouter/auto", name: "OpenRouter Auto", fastMode: false, webui: true, base: true },
   { id: "claude-opus-4-7", name: "Claude Opus 4.7", fastMode: true, webui: false, base: false },
   { id: "claude-opus-4-6", name: "Claude Opus 4.6", fastMode: true, webui: false, base: false },
@@ -170,10 +171,23 @@ export function modelSupportedByHarness(id: string | undefined, harness: string)
   if (!id) return false;
   if (harness === "pi" || harness === "opencode" || harness === "mock") return Boolean(resolveModel(id));
   const provider = resolveModel(id)?.provider;
-  if (harness === "claude") return provider === "anthropic" || /^claude-/i.test(id);
-  if (harness === "codex") return provider === "openai" || /^(?:gpt-|o\d|codex|openai\/)/i.test(id);
+  // A resolvable model's provider is authoritative; the id-prefix heuristics only apply to
+  // as-yet-unknown ids (e.g. a future model not in the registry). This keeps an OpenRouter
+  // slug like "openai/gpt-5.6-luna" from being mistaken for an OpenAI-native Codex model.
+  if (harness === "claude") return provider ? provider === "anthropic" : /^claude-/i.test(id);
+  if (harness === "codex") return provider ? provider === "openai" : /^(?:gpt-|o\d|codex|openai\/)/i.test(id);
   return false;
 }
+
+// Each provider's designated flagship base model. Used as the fallback when the shipped
+// default (an OpenRouter model) cannot be billed under a provider-constrained deployment, so
+// a deployment that declares e.g. Anthropic keeps its flagship rather than the first entry
+// that happens to sort first in the registry.
+const PROVIDER_DEFAULT_MODEL: Record<ModelProvider, string> = {
+  anthropic: "claude-opus-5",
+  openai: "gpt-5.6-sol",
+  openrouter: "openai/gpt-5.6-luna",
+};
 
 export function defaultModelForHarness(
   harness: string,
@@ -183,6 +197,11 @@ export function defaultModelForHarness(
   if (configured && modelSupportedByHarness(configured, harness)) return configured;
   const preferred = harness === "codex" ? DEFAULT_CODEX_MODEL_ID : DEFAULT_AGENT_MODEL_ID;
   if (!providers || modelServiceable(preferred, providers)) return preferred;
+  for (const provider of MODEL_PROVIDERS) {
+    if (!providers[provider]) continue;
+    const base = PROVIDER_DEFAULT_MODEL[provider];
+    if (modelSupportedByHarness(base, harness) && modelServiceable(base, providers)) return base;
+  }
   const servable = SELECTABLE_BASE_MODELS.find(
     (model) => modelSupportedByHarness(model.id, harness) && modelServiceable(model.id, providers),
   );

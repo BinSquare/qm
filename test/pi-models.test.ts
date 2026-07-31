@@ -58,13 +58,25 @@ test("the default base model follows the providers a deployment can actually bil
       `a ${provider}-only deployment must default to a model ${provider} can serve, got ${chosen}`,
     );
   }
-  assert.equal(defaultModelForHarness("pi", undefined, onlyProvider("openrouter")), "openrouter/auto");
-  assert.equal(defaultModelForHarness("pi", undefined, onlyProvider("openai")), "gpt-5.6-sol");
+  assert.equal(
+    defaultModelForHarness("pi", undefined, onlyProvider("openrouter")),
+    "openai/gpt-5.6-luna",
+    "the shipped default is the OpenRouter-hosted GPT-5.6 Luna, so an OpenRouter deployment keeps it",
+  );
+  assert.equal(
+    defaultModelForHarness("pi", undefined, onlyProvider("openai")),
+    "gpt-5.6-sol",
+    "an OpenAI-only deployment cannot serve the OpenRouter default and falls back to its first OpenAI model",
+  );
 });
 
 test("provider-blind callers and explicit pins keep the shipped default", () => {
-  assert.equal(defaultModelForHarness("pi"), "claude-opus-5");
-  assert.equal(defaultModelForHarness("pi", undefined, onlyProvider("anthropic")), "claude-opus-5");
+  assert.equal(defaultModelForHarness("pi"), "openai/gpt-5.6-luna");
+  assert.equal(
+    defaultModelForHarness("pi", undefined, onlyProvider("anthropic")),
+    "claude-opus-5",
+    "an Anthropic-only deployment cannot serve the OpenRouter default and falls back to its designated Anthropic flagship",
+  );
   assert.equal(
     defaultModelForHarness("pi", "claude-sonnet-5", onlyProvider("openrouter")),
     "claude-sonnet-5",
@@ -72,13 +84,13 @@ test("provider-blind callers and explicit pins keep the shipped default", () => 
   );
   assert.equal(
     defaultModelForHarness("pi", undefined, { anthropic: false, openai: false, openrouter: false }),
-    "claude-opus-5",
+    "openai/gpt-5.6-luna",
     "with no provider at all the shipped default stands rather than an arbitrary pick",
   );
 });
 
 test("a provider that cannot serve a harness has no default model for it", () => {
-  assert.equal(defaultModelForProvider("pi", "openrouter"), "openrouter/auto");
+  assert.equal(defaultModelForProvider("pi", "openrouter"), "openai/gpt-5.6-luna");
   assert.equal(defaultModelForProvider("codex", "openai"), "gpt-5.6-sol");
   assert.equal(defaultModelForProvider("claude", "anthropic"), "claude-opus-5");
   assert.equal(defaultModelForProvider("codex", "anthropic"), undefined, "the Codex CLI runs no Anthropic model");
@@ -98,6 +110,7 @@ test("the curated catalog contains only current model families", () => {
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
+      "openai/gpt-5.6-luna",
       "openrouter/auto",
     ],
   );

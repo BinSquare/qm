@@ -626,7 +626,7 @@ test("webui-models is an org-wide string-list read back via admin GET and surfac
     ]);
 
     const before = await fetch(`${srv.base}/v1/surface-config`);
-    assert.equal(((await before.json()) as { baseModel: string }).baseModel, "claude-opus-5");
+    assert.equal(((await before.json()) as { baseModel: string }).baseModel, "openai/gpt-5.6-luna");
     const setBase = await fetch(`${srv.base}/v1/admin/scopes/org:default-org/base-model`, {
       method: "PUT",
       headers: ADMIN,

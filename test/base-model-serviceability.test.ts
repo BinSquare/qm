@@ -64,7 +64,7 @@ test("a deployment that declares a provider runs that provider's base model", as
   for (const [modelProvider, key, expected] of [
     ["anthropic", "anthropicApiKey", "claude-opus-5"],
     ["openai", "openaiApiKey", "gpt-5.6-sol"],
-    ["openrouter", "openrouterApiKey", "openrouter/auto"],
+    ["openrouter", "openrouterApiKey", "openai/gpt-5.6-luna"],
   ] as const) {
     const srv = start({ modelProvider, [key]: `deployment-${modelProvider}-key` });
     try {
@@ -85,8 +85,8 @@ test("an undeclared deployment keeps the shipped default, whatever keys it holds
     try {
       assert.equal(
         await effectiveModel(srv.base),
-        "claude-opus-5",
-        "upgrading must not move an existing deployment's model or its billing",
+        "openai/gpt-5.6-luna",
+        "an undeclared deployment runs the shipped default, which is now the OpenRouter-hosted GPT-5.6 Luna",
       );
     } finally {
       await srv.close();
@@ -101,7 +101,7 @@ test("the declaration outranks a stray key from another vendor", async () => {
     anthropicApiKey: "stray-anthropic-key",
   });
   try {
-    assert.equal(await effectiveModel(srv.base), "openrouter/auto");
+    assert.equal(await effectiveModel(srv.base), "openai/gpt-5.6-luna");
   } finally {
     await srv.close();
   }

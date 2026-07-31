@@ -619,10 +619,10 @@ test("admin-configured browse step limit rides provision env (BROWSE_LAB_MAX_STE
   );
   assert.equal(
     captured?.env?.BROWSE_LAB_MODEL,
-    "claude-opus-5",
+    "openai/gpt-5.6-luna",
     "with no override the browse model follows the deployment base model",
   );
-  assert.equal(captured?.env?.BROWSE_LAB_MODEL_PROVIDER, "anthropic", "the runner is told which client to build");
+  assert.equal(captured?.env?.BROWSE_LAB_MODEL_PROVIDER, "openrouter", "the runner is told which client to build");
 
   built.config.setBrowseMaxSteps("org:default-org", 120);
   built.config.setBrowseModel("org:default-org", "claude-sonnet-4-6");
@@ -657,10 +657,10 @@ test("a stored browse model that no longer resolves falls back to the base model
   assert.equal(res.status, "ok");
   assert.equal(
     captured?.env?.BROWSE_LAB_MODEL,
-    "claude-opus-5",
+    "openai/gpt-5.6-luna",
     "the unresolvable override is ignored in favour of the base model, not propagated",
   );
-  assert.equal(captured?.env?.BROWSE_LAB_MODEL_PROVIDER, "anthropic");
+  assert.equal(captured?.env?.BROWSE_LAB_MODEL_PROVIDER, "openrouter");
 });
 
 test("browse follows a live org base model change, not the process-start default", async () => {
@@ -680,7 +680,7 @@ test("browse follows a live org base model change, not the process-start default
 
   let res = await app.turn(dm("!run echo keys", { conversation: { kind: "dm", threadRef: "dm:U1:live1" } }));
   assert.equal(res.status, "ok");
-  assert.equal(captured?.env?.BROWSE_LAB_MODEL, "claude-opus-5", "starts on the deployment default");
+  assert.equal(captured?.env?.BROWSE_LAB_MODEL, "openai/gpt-5.6-luna", "starts on the deployment default");
 
   built.config.setBaseModel("org:default-org", "gpt-5.6-sol");
   res = await app.turn(dm("!run echo keys", { conversation: { kind: "dm", threadRef: "dm:U1:live2" } }));

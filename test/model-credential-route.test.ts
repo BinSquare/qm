@@ -70,6 +70,7 @@ test("admin model credentials are encrypted, write-only, live, and removable", a
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openai" },
         { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai" },
         { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", provider: "openai" },
+        { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna", provider: "openrouter" },
         { id: "openrouter/auto", name: "OpenRouter Auto", provider: "openrouter" },
       ],
     });
@@ -170,6 +171,7 @@ test("OpenRouter catalog exposes runtime-supported tool models as selectable bas
       }
     ).models.filter((model) => model.provider === "openrouter");
     assert.deepEqual(models, [
+      { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna", provider: "openrouter" },
       { id: "openrouter/auto", name: "OpenRouter Auto", provider: "openrouter" },
       { id: "anthropic/claude-sonnet-4.5", name: "Anthropic: Claude Sonnet 4.5", provider: "openrouter" },
     ]);
