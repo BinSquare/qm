@@ -19,7 +19,14 @@ import { createExecSandboxBase, sandboxScopeName } from "./exec-sandbox-base.ts"
 import { createLayerToolInstaller } from "./layer-tool-install.ts";
 import { createHomeSnapshotOps, HOME_SNAPSHOT_PRUNE, snapshotDue, type HomeSnapshotStore } from "./home-snapshot.ts";
 import type { LayerInstallFile } from "../deployment/load-layer.ts";
-import type { AgentComputerProfile, ComputerStatus, ExecResult, Sandbox, TeardownOptions } from "./sandbox.ts";
+import type {
+  AgentComputerProfile,
+  ComputerCheckpoint,
+  ComputerStatus,
+  ExecResult,
+  Sandbox,
+  TeardownOptions,
+} from "./sandbox.ts";
 
 const HOME_DIR = "/root";
 const HOME_TAR = `${HOME_DIR}/.qm-home.tar`;
@@ -64,6 +71,8 @@ export interface StoredSmolmachinesSandbox {
   lastSnapshotMs?: number;
   homeDirty?: boolean;
   snapshotError?: string;
+  /** Whole-computer restore points, oldest first. */
+  checkpoints?: ComputerCheckpoint[];
 }
 
 export interface SmolmachinesSandboxOptions extends BlobStagingOptions {
@@ -78,6 +87,9 @@ export interface SmolmachinesSandboxOptions extends BlobStagingOptions {
   defaultTimeoutSec?: number;
   egressProxyUrl?: string;
   snapshotIntervalMs?: number;
+  /** Checkpoint the whole computer at the end of every turn, so any turn can
+   *  be undone with `rewindComputer`. */
+  checkpointEachTurn?: boolean;
   store?: DurableMap<StoredSmolmachinesSandbox>;
   advisoryLock?: AdvisoryLock;
   snapshots?: HomeSnapshotStore;
@@ -365,6 +377,16 @@ export function createSmolmachinesSandbox(workspace: WorkspaceStore, opts: Smolm
       })
     : undefined;
 
+  /** Capture the machine (disks, RAM, processes) and record the restore point. */
+  async function checkpointMachine(scope: string, name: string, label: string): Promise<ComputerCheckpoint> {
+    const id = await machineIdFor(name);
+    const captured = await apiJson<{ id: string }>("POST", `${machinePath(id)}/checkpoints`, undefined, 30 * 60_000);
+    const checkpoint: ComputerCheckpoint = { id: captured.id, label, atMs: Date.now() };
+    const prior = (await store.get(scope))?.checkpoints ?? [];
+    await mergeStored(scope, { checkpoints: [...prior, checkpoint] });
+    return checkpoint;
+  }
+
   async function mergeStored(scope: string, patch: Partial<StoredSmolmachinesSandbox>): Promise<void> {
     await store.putIfAbsent(scope, {});
     await store.merge(scope, patch);
@@ -549,6 +571,35 @@ export function createSmolmachinesSandbox(workspace: WorkspaceStore, opts: Smolm
         }
       : {}),
 
+    async checkpointComputer(scopeId: string, label?: string): Promise<ComputerCheckpoint> {
+      const name = sandboxScopeName(prefix, scopeId);
+      return advisoryLock.withLock(lifecycleKey(scopeId), () =>
+        checkpointMachine(scopeId, name, label ?? `manual-${Date.now()}`),
+      );
+    },
+
+    async listComputerCheckpoints(scopeId: string): Promise<ComputerCheckpoint[]> {
+      return [...((await store.get(scopeId))?.checkpoints ?? [])].reverse();
+    },
+
+    async rewindComputer(scopeId: string, checkpointId: string): Promise<{ undo: ComputerCheckpoint }> {
+      const name = sandboxScopeName(prefix, scopeId);
+      return advisoryLock.withLock(lifecycleKey(scopeId), async () => {
+        const known = (await store.get(scopeId))?.checkpoints ?? [];
+        const target = known.find((c) => c.id === checkpointId || c.label === checkpointId);
+        if (!target) throw new Error(`smolmachines rewind ${name}: no restore point ${checkpointId}`);
+        // The rewind itself can be undone: save where the computer is now.
+        const undo = await checkpointMachine(scopeId, name, `before-rewind-${Date.now()}`);
+        await deleteMachine(name);
+        const restored = await apiJson<MachineInfo>("POST", `/v1/checkpoints/${encodeURIComponent(target.id)}/restore`, {
+          name,
+        });
+        idByName.set(name, restored.id);
+        await startMachine(restored.id);
+        return { undo };
+      });
+    },
+
     async computerStatus(scopeId: string): Promise<ComputerStatus> {
       const name = sandboxScopeName(prefix, scopeId);
       const recovery = await recoveryFor(scopeId);
@@ -620,6 +671,21 @@ export function createSmolmachinesSandbox(workspace: WorkspaceStore, opts: Smolm
             }
           }),
         );
+      }
+      if (opts.checkpointEachTurn && !handle.scratch && !tdOpts?.destroy && !tdOpts?.homeUnchanged) {
+        // The back button: every turn that changed the computer leaves a
+        // restore point, so `rewindComputer` can undo it.
+        const scope = base.scopeFor(handle.id) ?? "default";
+        await advisoryLock
+          .withLock(lifecycleKey(scope), () => checkpointMachine(scope, handle.id, `turn-${Date.now()}`))
+          .catch((e) =>
+            opts.onError?.({
+              category: "sandbox_snapshot",
+              code: "turn_checkpoint_failed",
+              message: errMessage(e),
+              scopeLabel: scope,
+            }),
+          );
       }
       return base.teardown(handle, tdOpts);
     },

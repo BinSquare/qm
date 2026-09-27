@@ -507,3 +507,50 @@ test("destructive teardown waits for another core's lifecycle lock", async () =>
   await Promise.all([holding, teardown]);
   assert.equal(fake.machine(handle.id), null);
 });
+
+test("the back button: rewind puts the whole computer back to a restore point, and the rewind can be undone", async () => {
+  const h = await sandbox.provision(layers);
+  await sandbox.run(h, "mkdir -p project && echo 'v1 works' > project/app.txt");
+  const good = await sandbox.checkpointComputer!(scope, "before-refactor");
+  // A turn goes wrong: the agent wrecks the project.
+  await sandbox.run(h, "rm -rf project && echo 'broken' > oops.txt");
+  assert.equal(await sandbox.readFile(h, "project/app.txt"), null);
+
+  const { undo } = await sandbox.rewindComputer!(scope, good.id);
+  const h2 = await sandbox.provision(layers);
+  assert.equal((await sandbox.readFile(h2, "project/app.txt"))?.trim(), "v1 works");
+  assert.equal(await sandbox.readFile(h2, "oops.txt"), null);
+
+  // Restore points are listed newest first, including the one taken before the rewind.
+  const points = await sandbox.listComputerCheckpoints!(scope);
+  assert.deepEqual(points.map((c) => c.label), [undo.label, "before-refactor"]);
+
+  // Undo the rewind: back to the broken state.
+  await sandbox.rewindComputer!(scope, undo.id);
+  const h3 = await sandbox.provision(layers);
+  assert.equal((await sandbox.readFile(h3, "oops.txt"))?.trim(), "broken");
+  assert.deepEqual(fake.names().filter((n) => n === scopeName()), [scopeName()], "one machine per scope, never two");
+});
+
+test("rewinding to an unknown restore point fails without touching the computer", async () => {
+  const h = await sandbox.provision(layers);
+  await sandbox.run(h, "echo keep > keep.txt");
+  await assert.rejects(sandbox.rewindComputer!(scope, "nope"), /no restore point nope/);
+  assert.equal((await sandbox.readFile(h, "keep.txt"))?.trim(), "keep");
+});
+
+test("checkpointEachTurn leaves a restore point after every turn that changed the computer", async () => {
+  sandbox = make({ checkpointEachTurn: true });
+  const h = await sandbox.provision(layers);
+  await sandbox.run(h, "echo turn1 > t.txt");
+  await sandbox.teardown(h);
+  const h2 = await sandbox.provision(layers);
+  await sandbox.run(h2, "echo turn2 > t.txt");
+  await sandbox.teardown(h2);
+  await sandbox.teardown(await sandbox.provision(layers), { homeUnchanged: true });
+  const points = await sandbox.listComputerCheckpoints!(scope);
+  assert.equal(points.length, 2, "an unchanged turn adds no restore point");
+  await sandbox.rewindComputer!(scope, points[1]!.id);
+  const h3 = await sandbox.provision(layers);
+  assert.equal((await sandbox.readFile(h3, "t.txt"))?.trim(), "turn1");
+});

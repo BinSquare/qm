@@ -184,6 +184,13 @@ export interface TeardownOptions {
   homeUnchanged?: boolean;
 }
 
+/** A saved copy of a scope's whole computer: disks, RAM and running processes. */
+export interface ComputerCheckpoint {
+  id: string;
+  label: string;
+  atMs: number;
+}
+
 export interface Sandbox {
   readonly profile: AgentComputerProfile;
   profileFor?(scopeId: string, sandboxId?: string): Promise<AgentComputerProfile>;
@@ -215,6 +222,13 @@ export interface Sandbox {
   persistHomeSnapshot?(scopeId: string): Promise<void>;
   computerStatus?(scopeId: string): Promise<ComputerStatus>;
   restartComputer?(scopeId: string): Promise<void>;
+  /** Save the scope's whole computer (the back button's restore point). */
+  checkpointComputer?(scopeId: string, label?: string): Promise<ComputerCheckpoint>;
+  /** The scope's restore points, newest first. */
+  listComputerCheckpoints?(scopeId: string): Promise<ComputerCheckpoint[]>;
+  /** Put the scope's computer back to a restore point. The computer is
+   *  checkpointed first, so the rewind itself can be undone. */
+  rewindComputer?(scopeId: string, checkpointId: string): Promise<{ undo: ComputerCheckpoint }>;
   teardown(handle: SandboxHandle, opts?: TeardownOptions): Promise<void>;
   destroyScope?(scopeId: string): Promise<void>;
   reapDeepIdle?(idleMs: number, devIdleMs?: number): Promise<{ reaped: number }>;

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -196,6 +196,27 @@ export function installFakeSmolmachines(): FakeSmolmachines {
         if (!existsSync(hostPath)) return new Response("file not found", { status: 404 });
         return new Response(new Uint8Array(readFileSync(hostPath)), { status: 200 });
       }
+    }
+    // Checkpoints capture the machine's filesystem; restore creates a new
+    // (stopped) machine from one, as the control plane does.
+    const capture = /^\/v1\/machines\/([^/]+)\/checkpoints$/.exec(url.pathname);
+    if (capture && method === "POST") {
+      const m = machines.get(decodeURIComponent(capture[1]!));
+      if (!m) return new Response("machine not found", { status: 404 });
+      const id = `ckpt-${nextId++}`;
+      cpSync(m.home, join(root, id), { recursive: true });
+      return Response.json({ id, machineId: m.id, status: "available" }, { status: 201 });
+    }
+    const restore = /^\/v1\/checkpoints\/([^/]+)\/restore$/.exec(url.pathname);
+    if (restore && method === "POST") {
+      const saved = join(root, decodeURIComponent(restore[1]!));
+      if (!existsSync(saved)) return new Response("checkpoint not found", { status: 404 });
+      const body = JSON.parse(toBuf(init?.body).toString() || "{}") as { name?: string };
+      if (body.name && byName(body.name)) return new Response("name taken", { status: 409 });
+      const m = create({ name: body.name ?? null });
+      rmSync(m.home, { recursive: true, force: true });
+      cpSync(saved, m.home, { recursive: true });
+      return Response.json(info(m), { status: 201 });
     }
     const sub = /^\/v1\/machines\/([^/]+)(?:\/(exec|start|stop))?$/.exec(url.pathname);
     if (sub) {
