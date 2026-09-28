@@ -328,6 +328,8 @@ export interface AgentToolsOptions {
   mcpTools?: () => McpToolDescriptor[];
   controlTools?: boolean;
   sandboxResources?: boolean;
+  /** Offer the back button: checkpoint, checkpoints and rewind. */
+  computerCheckpoints?: boolean;
   readOnly?: boolean;
   surfaceTools?: boolean;
   delegateWork?: boolean;
@@ -343,6 +345,9 @@ export type CoreToolOptions = Omit<
 export function coreToolOptions(config: Config): CoreToolOptions {
   return {
     sandboxResources: config.sandboxResourcesEnabled,
+    computerCheckpoints:
+      config.sandboxBackend === "smolmachines" &&
+      Boolean(config.smolmachinesSandbox.checkpointable || config.smolmachinesSandbox.checkpointEachTurn),
     scratchExec: config.scratchExecEnabled,
     // Availability is checked per turn; Open can be enabled without restarting the harness.
     ownerAuthExec: true,
@@ -903,13 +908,17 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
   const sandboxActions = [
     "status",
     "restart",
+    ...(opts?.computerCheckpoints ? ["checkpoint", "checkpoints", "rewind"] : []),
     ...(opts?.sandboxResources ? ["list", "create", "set_default", "retire"] : []),
   ];
+  const checkpointHelp = opts?.computerCheckpoints
+    ? " checkpoint saves a restore point of this scope's whole computer (files, installed tools and running processes); name it with checkpoint. checkpoints lists restore points, newest first. rewind puts the computer back to the restore point named by checkpoint (id or label), after first saving a restore point that undoes the rewind; use it to recover from a turn that broke the computer, not for ordinary file edits."
+    : "";
   const sandboxManagement = defineTool({
     name: "sandbox",
     label: "sandbox",
     description:
-      "Manage sandbox resources. list returns providers, supported actions, inventory, and this scope's optional default. If work needs a computer and this scope has no default, do not report blocked: list providers, create a sandbox, set_default to it, and retry. Only report blocked if creation fails. create provisions a blank sandbox without changing the default or copying files. set_default changes routing only; pass sandbox_id:null to clear it. status reports health and recovery expiry without provisioning. restart recovers working state where supported and stops running processes. retire deletes the named sandbox after its default and jobs are cleared. Durable outputs belong in Files or git. Select an exact sandbox_id for status/restart or omit it to use the stored default.",
+      "Manage sandbox resources. list returns providers, supported actions, inventory, and this scope's optional default. If work needs a computer and this scope has no default, do not report blocked: list providers, create a sandbox, set_default to it, and retry. Only report blocked if creation fails. create provisions a blank sandbox without changing the default or copying files. set_default changes routing only; pass sandbox_id:null to clear it. status reports health and recovery expiry without provisioning. restart recovers working state where supported and stops running processes. retire deletes the named sandbox after its default and jobs are cleared. Durable outputs belong in Files or git. Select an exact sandbox_id for status/restart or omit it to use the stored default." + checkpointHelp,
     parameters: Type.Object({
       action: Type.String({ enum: sandboxActions }),
       sandbox_id: Type.Optional(
@@ -919,6 +928,16 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
       ),
       backend: Type.Optional(Type.String({ description: "create only: provider from list." })),
       name: Type.Optional(Type.String({ description: "create only: human-readable name." })),
+      ...(opts?.computerCheckpoints
+        ? {
+            checkpoint: Type.Optional(
+              Type.String({
+                minLength: 1,
+                description: "checkpoint: a label for the restore point. rewind: the restore point's id or label.",
+              }),
+            ),
+          }
+        : {}),
       purpose: Type.String({ description: "Human-readable purpose, at most 4 words (e.g. 'Check sandbox health')." }),
     }),
     async execute(callId, params) {
@@ -931,6 +950,9 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
         ...(params.sandbox_id !== undefined ? { sandbox_id: params.sandbox_id } : {}),
         ...(params.backend ? { backend: params.backend } : {}),
         ...(params.name ? { name: params.name } : {}),
+        ...((params as { checkpoint?: string }).checkpoint
+          ? { checkpoint: (params as { checkpoint?: string }).checkpoint }
+          : {}),
       });
       try {
         if (!sandboxActions.includes(params.action)) throw new Error("unsupported sandbox action");
@@ -947,6 +969,37 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
           return recordResult(callId, { tool: "sandbox", action: params.action }, text(JSON.stringify(result)));
         }
         if (params.sandbox_id === null) throw new Error("null only clears a default");
+        if (["checkpoint", "checkpoints", "rewind"].includes(params.action)) {
+          if (params.sandbox_id) throw new Error(`${params.action} applies to this scope's computer; omit sandbox_id`);
+          const point = (params as { checkpoint?: string }).checkpoint;
+          if (params.action === "checkpoint") {
+            const saved = await tc.checkpointComputer(point);
+            return recordResult(
+              callId,
+              { tool: "sandbox", action: "checkpoint", checkpoint: saved.id },
+              text(`Saved restore point ${saved.label} (${saved.id}).`),
+            );
+          }
+          if (params.action === "checkpoints") {
+            const points = await tc.listComputerCheckpoints();
+            const lines = points.map((p) => `${p.label}  ${p.id}  ${new Date(p.atMs).toISOString()}`);
+            return recordResult(
+              callId,
+              { tool: "sandbox", action: "checkpoints", count: points.length },
+              text(lines.length ? lines.join("\n") : "No restore points yet."),
+            );
+          }
+          if (!point) throw new Error("rewind needs checkpoint: the restore point's id or label");
+          const { undo } = await tc.rewindComputer(point);
+          return recordResult(
+            callId,
+            { tool: "sandbox", action: "rewind", checkpoint: point, undo: undo.id },
+            text(
+              `Rewound the computer to ${point}. To undo the rewind, rewind to ${undo.label}. ` +
+                "Processes and files are as they were at that restore point.",
+            ),
+          );
+        }
         if (params.action === "restart") {
           await tc.restartComputer(params.sandbox_id);
           return recordResult(
@@ -2102,6 +2155,7 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
     list_processes: [],
     watch_process: ["process_id", "since_cursor", "pattern", "instructions"],
     unwatch_process: ["monitor_id"],
+    ...(opts?.computerCheckpoints ? { checkpoint: ["checkpoint"], checkpoints: [], rewind: ["checkpoint"] } : {}),
   };
   const requiredFields: Record<string, string[]> = {
     status: ["purpose"],
@@ -2117,6 +2171,9 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
     signal_process: ["process_id"],
     watch_process: ["process_id"],
     unwatch_process: ["monitor_id"],
+    ...(opts?.computerCheckpoints
+      ? { checkpoint: ["purpose"], checkpoints: ["purpose"], rewind: ["purpose", "checkpoint"] }
+      : {}),
   };
   const actionSchemas = Object.fromEntries(
     Object.entries(actionFields).map(([action, fields]) => [

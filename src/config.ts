@@ -501,6 +501,8 @@ interface SmolmachinesSandboxEnv {
   snapshotS3Bucket?: string;
   snapshotIntervalSec?: number;
   defaultTimeoutSec?: number;
+  checkpointable?: boolean;
+  checkpointEachTurn?: boolean;
 }
 
 function smolmachinesSandboxEnv(env: NodeJS.ProcessEnv): SmolmachinesSandboxEnv {
@@ -522,6 +524,17 @@ function smolmachinesSandboxEnv(env: NodeJS.ProcessEnv): SmolmachinesSandboxEnv 
       ? { autoStopSec: numEnvStrict("SMOLMACHINES_AUTOSTOP_SEC", env.SMOLMACHINES_AUTOSTOP_SEC) }
       : {}),
     ...(env.SMOLMACHINES_EGRESS_PROXY_URL ? { egressProxyUrl: env.SMOLMACHINES_EGRESS_PROXY_URL } : {}),
+    ...(boolEnvStrict("SMOLMACHINES_CHECKPOINTABLE", env.SMOLMACHINES_CHECKPOINTABLE) !== undefined
+      ? { checkpointable: boolEnvStrict("SMOLMACHINES_CHECKPOINTABLE", env.SMOLMACHINES_CHECKPOINTABLE) }
+      : {}),
+    ...(boolEnvStrict("SMOLMACHINES_CHECKPOINT_EACH_TURN", env.SMOLMACHINES_CHECKPOINT_EACH_TURN) !== undefined
+      ? {
+          checkpointEachTurn: boolEnvStrict(
+            "SMOLMACHINES_CHECKPOINT_EACH_TURN",
+            env.SMOLMACHINES_CHECKPOINT_EACH_TURN,
+          ),
+        }
+      : {}),
     ...(env.SMOLMACHINES_SNAPSHOT_S3_BUCKET ? { snapshotS3Bucket: env.SMOLMACHINES_SNAPSHOT_S3_BUCKET } : {}),
     ...(numEnvStrict("SMOLMACHINES_SNAPSHOT_INTERVAL_SEC", env.SMOLMACHINES_SNAPSHOT_INTERVAL_SEC) !== undefined
       ? {

@@ -23,6 +23,15 @@ function fakeToolContext(sink?: { lastExecOpts?: Parameters<ToolContext["execute
       };
     },
     async restartComputer() {},
+    async checkpointComputer() {
+      return { id: "ckpt-1", label: "manual", atMs: 0 };
+    },
+    async listComputerCheckpoints() {
+      return [];
+    },
+    async rewindComputer() {
+      return { undo: { id: "ckpt-2", label: "before-rewind-1", atMs: 0 } };
+    },
     async migrateComputer(): Promise<{ from: string; to: string }> {
       throw new Error("computer migration is not available on this deployment");
     },
@@ -3966,4 +3975,56 @@ test("thrown execution errors leave pending child messages for the next delivere
     assert.match(JSON.stringify(await call(tool, input)), /Important child finding/);
     assert.equal(pending, false);
   }
+});
+
+test("the back button: checkpoint, checkpoints and rewind reach this scope's computer", async () => {
+  const calls: string[] = [];
+  const tc = {
+    ...fakeToolContext(),
+    checkpointComputer: async (label?: string) => {
+      calls.push(`checkpoint:${label}`);
+      return { id: "ckpt-9", label: label ?? "manual", atMs: 0 };
+    },
+    listComputerCheckpoints: async () => [
+      { id: "ckpt-9", label: "before-refactor", atMs: Date.UTC(2026, 8, 27) },
+    ],
+    rewindComputer: async (checkpoint: string) => {
+      calls.push(`rewind:${checkpoint}`);
+      return { undo: { id: "ckpt-10", label: "before-rewind-1", atMs: 0 } };
+    },
+  };
+  const ref: ToolContextRef = { current: tc, emit: () => {}, scopeLabel: "personal:U1" };
+  const sandbox = createAgentTools(ref, { computerCheckpoints: true }).find((t) => t.name === "sandbox")!;
+  const actions = (sandbox.parameters as { properties: { action: { enum: string[] } } }).properties.action.enum;
+  assert.deepEqual(actions, ["status", "restart", "checkpoint", "checkpoints", "rewind"]);
+
+  assert.match(
+    textOut(await call(sandbox, { action: "checkpoint", checkpoint: "before-refactor", purpose: "p" })),
+    /Saved restore point before-refactor \(ckpt-9\)/,
+  );
+  assert.match(textOut(await call(sandbox, { action: "checkpoints", purpose: "p" })), /before-refactor {2}ckpt-9/);
+  const rewound = textOut(await call(sandbox, { action: "rewind", checkpoint: "before-refactor", purpose: "p" }));
+  assert.match(rewound, /Rewound the computer to before-refactor.*undo the rewind, rewind to before-rewind-1/);
+  assert.deepEqual(calls, ["checkpoint:before-refactor", "rewind:before-refactor"]);
+  assert.match(textOut(await call(sandbox, { action: "rewind", purpose: "p" })), /rewind needs checkpoint/);
+
+  // Off by default: other backends' tool surface is unchanged.
+  const plain = createAgentTools(ref).find((t) => t.name === "sandbox")!;
+  assert.deepEqual((plain.parameters as { properties: { action: { enum: string[] } } }).properties.action.enum, [
+    "status",
+    "restart",
+  ]);
+});
+
+test("with sandbox resources, the unified sandbox tool validates the back button actions", async () => {
+  const tc = { ...fakeToolContext() };
+  const ref: ToolContextRef = { current: tc, emit: () => {}, scopeLabel: "personal:U1" };
+  const sandbox = createAgentTools(ref, { computerCheckpoints: true, sandboxResources: true }).find(
+    (t) => t.name === "sandbox",
+  )!;
+  assert.match(textOut(await call(sandbox, { action: "rewind", purpose: "p" })), /requires checkpoint/);
+  assert.match(
+    textOut(await call(sandbox, { action: "rewind", checkpoint: "ckpt-1", purpose: "p" })),
+    /Rewound the computer to ckpt-1/,
+  );
 });

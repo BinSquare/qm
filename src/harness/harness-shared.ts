@@ -21,6 +21,7 @@ export interface HarnessToolPlumbing {
   mcpTools?: () => McpToolDescriptor[];
   controlTools?: boolean;
   sandboxResources?: boolean;
+  computerCheckpoints?: boolean;
   execTimeoutMs?: number;
   execTimeoutCeilingMs?: number;
   backgroundJobTtlMs?: number;
@@ -127,6 +128,7 @@ export function harnessToolOptions(opts: HarnessToolPlumbing, turn?: HarnessTurn
     ...(opts.mcpTools ? { mcpTools: opts.mcpTools } : {}),
     controlTools: opts.controlTools,
     sandboxResources: opts.sandboxResources,
+    computerCheckpoints: opts.computerCheckpoints,
     execTimeoutMs: opts.execTimeoutMs,
     execTimeoutCeilingMs: opts.execTimeoutCeilingMs,
     backgroundJobTtlMs: opts.backgroundJobTtlMs,

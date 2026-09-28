@@ -139,6 +139,7 @@ export interface PiHarnessOptions {
   mcpTools?: () => McpToolDescriptor[];
   controlTools?: boolean;
   sandboxResources?: boolean;
+  computerCheckpoints?: boolean;
   turnWallClockMs?: number;
   execTimeoutMs?: number;
   execTimeoutCeilingMs?: number;
@@ -1654,6 +1655,7 @@ export function createPiHarness(opts?: PiHarnessOptions): Harness {
           ...(opts?.backgroundJobTtlMs !== undefined ? { backgroundJobTtlMs: opts.backgroundJobTtlMs } : {}),
           ...(opts?.backgroundJobTtlMaxMs !== undefined ? { backgroundJobTtlMaxMs: opts.backgroundJobTtlMaxMs } : {}),
           sandboxResources: opts?.sandboxResources,
+          computerCheckpoints: opts?.computerCheckpoints,
         }),
         noTools: "builtin",
         sessionManager: SessionManager.inMemory(undefined, { id: sessionId }),

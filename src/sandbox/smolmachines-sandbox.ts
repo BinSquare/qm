@@ -685,7 +685,13 @@ export function createSmolmachinesSandbox(workspace: WorkspaceStore, opts: Smolm
           }),
         );
       }
-      if (opts.checkpointEachTurn && !handle.scratch && !tdOpts?.destroy && !tdOpts?.homeUnchanged) {
+      if (
+        opts.checkpointEachTurn &&
+        tdOpts?.turnEnd &&
+        !handle.scratch &&
+        !tdOpts.destroy &&
+        !tdOpts.homeUnchanged
+      ) {
         // The back button: every turn that changed the computer leaves a
         // restore point, so `rewindComputer` can undo it.
         const scope = base.scopeFor(handle.id) ?? "default";

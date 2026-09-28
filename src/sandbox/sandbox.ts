@@ -182,6 +182,9 @@ export interface TeardownOptions {
   keepWarm?: boolean;
   destroy?: boolean;
   homeUnchanged?: boolean;
+  /** Set when a live turn releases the computer (not a monitor poll or the
+   *  process reaper): the boundary a per-turn restore point is taken at. */
+  turnEnd?: boolean;
 }
 
 /** A saved copy of a scope's whole computer: disks, RAM and running processes. */

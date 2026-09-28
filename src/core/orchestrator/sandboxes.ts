@@ -766,6 +766,7 @@ export function createTurnSandboxes(ctx: TurnSandboxContext) {
     await deps.sandbox.teardown(handle, {
       ...(keepWarm ? { keepWarm: true } : {}),
       ...(box.used ? {} : { homeUnchanged: true }),
+      turnEnd: true,
     });
     if (ownerCleanupError) throw ownerCleanupError;
   };

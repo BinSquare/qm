@@ -224,6 +224,7 @@ test("background: a turn that never used its eagerly provisioned box returns bef
   assert.equal(g.teardownStarted, 2, "the detached tail reached teardown");
   assert.equal(g.teardownOpts[1]?.homeUnchanged, true, "an unused box tells the backend there is nothing to snapshot");
   assert.equal(g.teardownOpts[0]?.homeUnchanged, undefined, "a used box does not");
+  assert.equal(g.teardownOpts[0]?.turnEnd, true, "a live turn marks its release as a turn end");
   g.release();
   for (let i = 0; i < 200 && g.teardownFinished < 2; i++) await tick();
   assert.equal(g.teardownFinished, 2);

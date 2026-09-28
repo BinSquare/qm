@@ -8,7 +8,7 @@ import type { SandboxAccessPlan, SandboxResources } from "../sandbox/sandbox-res
 import { join } from "node:path";
 import { interpolateSplitEnv } from "../deployment/deployment-layer.ts";
 import type { CredentialPathSpec } from "../credentials/resident-paths.ts";
-import type { ComputerStatus, ExecResult, Sandbox, SandboxHandle } from "../sandbox/sandbox.ts";
+import type { ComputerCheckpoint, ComputerStatus, ExecResult, Sandbox, SandboxHandle } from "../sandbox/sandbox.ts";
 import { ROUTE_CACHE_TTL_MS, type SandboxBackendName } from "../sandbox/sandbox-routing.ts";
 import type { SandboxMigrationRunner } from "../sandbox/sandbox-migration-runner.ts";
 import { CapabilityUnsupportedError, hasParentPathSegment, supportsAgentComputerExport } from "../sandbox/sandbox.ts";
@@ -224,6 +224,13 @@ export interface ToolContext extends SurfaceToolDeps {
   ): Promise<unknown>;
   computerStatus(sandboxId?: string): Promise<ComputerStatus>;
   restartComputer(sandboxId?: string): Promise<void>;
+  /** Save a restore point of this turn's whole computer (the back button). */
+  checkpointComputer(label?: string): Promise<ComputerCheckpoint>;
+  /** This turn's computer's restore points, newest first. */
+  listComputerCheckpoints(): Promise<ComputerCheckpoint[]>;
+  /** Put this turn's computer back to a restore point; returns the restore
+   *  point taken first, which undoes the rewind. */
+  rewindComputer(checkpoint: string): Promise<{ undo: ComputerCheckpoint }>;
   migrateComputer(to: string): Promise<{ from: string; to: string }>;
   read(path: string, signal?: AbortSignal): Promise<ReadResult>;
   skill(name: string, opts?: { path?: string; sandboxId?: string; signal?: AbortSignal }): Promise<SkillResult>;
@@ -698,6 +705,29 @@ export function createToolContext(deps: ToolContextDeps): ToolContext {
       }
       if (!writableScopeId) throw new Error("this turn has no scoped computer to restart");
       await deps.sandbox.restartComputer(writableScopeId);
+    },
+    async checkpointComputer(label?: string): Promise<ComputerCheckpoint> {
+      if (!deps.sandbox.checkpointComputer) {
+        throw new CapabilityUnsupportedError(deps.sandbox.profile.backend, "checkpointing the computer");
+      }
+      if (!writableScopeId) throw new Error("this turn has no scoped computer to checkpoint");
+      return deps.sandbox.checkpointComputer(writableScopeId, label);
+    },
+    async listComputerCheckpoints(): Promise<ComputerCheckpoint[]> {
+      if (!deps.sandbox.listComputerCheckpoints) {
+        throw new CapabilityUnsupportedError(deps.sandbox.profile.backend, "checkpointing the computer");
+      }
+      if (!writableScopeId) throw new Error("this turn has no scoped computer");
+      return deps.sandbox.listComputerCheckpoints(writableScopeId);
+    },
+    async rewindComputer(checkpoint: string): Promise<{ undo: ComputerCheckpoint }> {
+      if (!deps.sandbox.rewindComputer) {
+        throw new CapabilityUnsupportedError(deps.sandbox.profile.backend, "rewinding the computer");
+      }
+      if (!writableScopeId) throw new Error("this turn has no scoped computer to rewind");
+      // The machine is replaced under the same name, so this turn's handle
+      // keeps addressing it.
+      return deps.sandbox.rewindComputer(writableScopeId, checkpoint);
     },
     async migrateComputer(to: string): Promise<{ from: string; to: string }> {
       if (writableScopeId && (await deps.sandboxResources?.resolve(writableScopeId)) !== undefined)

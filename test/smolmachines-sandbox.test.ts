@@ -549,13 +549,15 @@ test("checkpointEachTurn leaves a restore point after every turn that changed th
   sandbox = make({ checkpointEachTurn: true });
   const h = await sandbox.provision(layers);
   await sandbox.run(h, "echo turn1 > t.txt");
-  await sandbox.teardown(h);
+  await sandbox.teardown(h, { turnEnd: true });
   const h2 = await sandbox.provision(layers);
   await sandbox.run(h2, "echo turn2 > t.txt");
-  await sandbox.teardown(h2);
-  await sandbox.teardown(await sandbox.provision(layers), { homeUnchanged: true });
+  await sandbox.teardown(h2, { turnEnd: true });
+  await sandbox.teardown(await sandbox.provision(layers), { turnEnd: true, homeUnchanged: true });
+  // A monitor poll or the process reaper releases the computer too; that is not a turn.
+  await sandbox.teardown(await sandbox.provision(layers), { keepWarm: true });
   const points = await sandbox.listComputerCheckpoints!(scope);
-  assert.equal(points.length, 2, "an unchanged turn adds no restore point");
+  assert.equal(points.length, 2, "only turns that changed the computer add a restore point");
   await sandbox.rewindComputer!(scope, points[1]!.id);
   const h3 = await sandbox.provision(layers);
   assert.equal((await sandbox.readFile(h3, "t.txt"))?.trim(), "turn1");

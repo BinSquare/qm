@@ -19,7 +19,32 @@ await sandbox.rewindComputer!(scopeId, undo.id);  // undo the rewind
   therefore undoable. An unknown restore point fails without touching the machine.
 - `listComputerCheckpoints(scope)` returns restore points, newest first.
 - `checkpointEachTurn: true` (a provider option) leaves a restore point after every
-  turn that changed the computer, so any turn can be undone. Unchanged turns add none.
+  turn that changed the computer, so any turn can be undone. Turns that change nothing,
+  monitor polls and the process reaper add none.
+
+## Turning it on
+
+Set these in the deployment's `.env` next to `SANDBOX_BACKEND=smolmachines`:
+
+| Variable | Effect |
+|---|---|
+| `SMOLMACHINES_CHECKPOINTABLE=true` | Create scope computers checkpointable (Smol Cloud fixes this at create) and offer the back button to agents |
+| `SMOLMACHINES_CHECKPOINT_EACH_TURN=true` | Also leave a restore point at the end of every turn that changed the computer (implies checkpointable) |
+
+Computers that already exist were created without checkpointing; destroy them (or let
+them be recreated) to get the back button on them.
+
+## What agents see
+
+With either setting on, the `sandbox` tool gains three actions for the turn's own
+computer:
+
+- `checkpoint`, with an optional `checkpoint` label: saves a restore point.
+- `checkpoints`: lists restore points, newest first.
+- `rewind`, with `checkpoint` set to the restore point's id or label: puts the computer
+  back to that point. The reply names the restore point that undoes the rewind.
+
+Other backends, and deployments without the settings, see no change to the tool.
 
 The methods are optional on the `Sandbox` interface, so other providers can add them.
 All of them run under the provider's per-scope lifecycle lock. This goes further than
@@ -99,4 +124,7 @@ SMOLMACHINES_TOKEN=<smol cloud api key> node scripts/back-button-live.ts
 ```
 
 This path uses the control plane's `POST /v1/machines/{id}/checkpoints` and
-`POST /v1/checkpoints/{id}/restore`. It has not been run yet.
+`POST /v1/checkpoints/{id}/restore`. It passed all six checks on Smol Cloud:
+
+- a checkpoint takes about 10 s;
+- a rewind takes about 19 s, including the checkpoint that makes it undoable.
