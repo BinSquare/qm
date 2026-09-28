@@ -16,6 +16,7 @@ const sandbox = createSmolmachinesSandbox(createLocalWorkspaceStore(mkdtempSync(
   image: process.env.SMOLMACHINES_IMAGE ?? "ubuntu:24.04",
   cpus: 2,
   memoryMb: 2048,
+  checkpointable: true,
 });
 const scope = scopeId("personal", "back-button");
 const layers = [{ scopeId: scope, mountPath: "/", mode: "rw" as const }];

@@ -509,7 +509,12 @@ test("destructive teardown waits for another core's lifecycle lock", async () =>
 });
 
 test("the back button: rewind puts the whole computer back to a restore point, and the rewind can be undone", async () => {
+  sandbox = make({ checkpointable: true });
   const h = await sandbox.provision(layers);
+  // Created and booted checkpointable, as Smol Cloud requires.
+  const create = fake.calls.find((c) => c.method === "POST" && c.path === "/v1/machines");
+  assert.equal((create?.body as { forkable?: boolean } | undefined)?.forkable, true);
+  assert.ok(fake.calls.some((c) => c.path.endsWith("/start") && c.query === "forkable=true"));
   await sandbox.run(h, "mkdir -p project && echo 'v1 works' > project/app.txt");
   const good = await sandbox.checkpointComputer!(scope, "before-refactor");
   // A turn goes wrong: the agent wrecks the project.
@@ -533,6 +538,7 @@ test("the back button: rewind puts the whole computer back to a restore point, a
 });
 
 test("rewinding to an unknown restore point fails without touching the computer", async () => {
+  sandbox = make({ checkpointable: true });
   const h = await sandbox.provision(layers);
   await sandbox.run(h, "echo keep > keep.txt");
   await assert.rejects(sandbox.rewindComputer!(scope, "nope"), /no restore point nope/);
@@ -553,4 +559,12 @@ test("checkpointEachTurn leaves a restore point after every turn that changed th
   await sandbox.rewindComputer!(scope, points[1]!.id);
   const h3 = await sandbox.provision(layers);
   assert.equal((await sandbox.readFile(h3, "t.txt"))?.trim(), "turn1");
+});
+
+test("a provider not configured checkpointable refuses to checkpoint, and creates plain machines", async () => {
+  const h = await sandbox.provision(layers);
+  await assert.rejects(sandbox.checkpointComputer!(scope, "x"), /checkpointable: true/);
+  const create = fake.calls.find((c) => c.method === "POST" && c.path === "/v1/machines");
+  assert.equal((create?.body as { forkable?: boolean } | undefined)?.forkable, undefined);
+  assert.equal((await sandbox.readFile(h, "missing")) ?? null, null);
 });

@@ -87,8 +87,11 @@ export interface SmolmachinesSandboxOptions extends BlobStagingOptions {
   defaultTimeoutSec?: number;
   egressProxyUrl?: string;
   snapshotIntervalMs?: number;
+  /** Create computers that can be checkpointed and rewound (the back button).
+   *  Smol Cloud fixes this when a machine is created. */
+  checkpointable?: boolean;
   /** Checkpoint the whole computer at the end of every turn, so any turn can
-   *  be undone with `rewindComputer`. */
+   *  be undone with `rewindComputer`. Implies `checkpointable`. */
   checkpointEachTurn?: boolean;
   store?: DurableMap<StoredSmolmachinesSandbox>;
   advisoryLock?: AdvisoryLock;
@@ -113,6 +116,7 @@ export function createSmolmachinesSandbox(workspace: WorkspaceStore, opts: Smolm
   };
   const defaultTimeoutSec = opts.defaultTimeoutSec ?? 600;
   const snapshotIntervalMs = opts.snapshotIntervalMs ?? 0;
+  const checkpointable = opts.checkpointable === true || opts.checkpointEachTurn === true;
   const store = opts.store ?? createMemoryMap<StoredSmolmachinesSandbox>();
   const advisoryLock = opts.advisoryLock ?? createMemoryAdvisoryLock();
   const lifecycleKey = (scope: string): string => `smolmachines-provision:${prefix}:${scope}`;
@@ -188,6 +192,8 @@ export function createSmolmachinesSandbox(workspace: WorkspaceStore, opts: Smolm
       ephemeral,
       ...(ephemeral ? { ttlSeconds: SCRATCH_TTL_SEC } : {}),
       ...(opts.autoStopSec ? { autoStopSeconds: opts.autoStopSec } : {}),
+      // Checkpointability is a create-time property the control plane stores.
+      ...(checkpointable ? { forkable: true } : {}),
     });
     if (res.status === 409) {
       const existing = await findMachine(name);
@@ -204,7 +210,8 @@ export function createSmolmachinesSandbox(workspace: WorkspaceStore, opts: Smolm
   }
 
   async function startMachine(id: string): Promise<void> {
-    const res = await api("POST", `${machinePath(id)}/start`);
+    // A checkpointable machine boots with RAM that can be captured live.
+    const res = await api("POST", `${machinePath(id)}/start${checkpointable ? "?forkable=true" : ""}`);
     if (!res.ok && res.status !== 409) {
       throw new Error(`smolmachines start ${id}: ${await httpFailure(res)}`);
     }
@@ -379,6 +386,12 @@ export function createSmolmachinesSandbox(workspace: WorkspaceStore, opts: Smolm
 
   /** Capture the machine (disks, RAM, processes) and record the restore point. */
   async function checkpointMachine(scope: string, name: string, label: string): Promise<ComputerCheckpoint> {
+    if (!checkpointable) {
+      throw new Error(
+        `smolmachines checkpoint ${name}: the provider was not configured with checkpointable: true, ` +
+          "so its computers were not created checkpointable",
+      );
+    }
     const id = await machineIdFor(name);
     const captured = await apiJson<{ id: string }>("POST", `${machinePath(id)}/checkpoints`, undefined, 30 * 60_000);
     const checkpoint: ComputerCheckpoint = { id: captured.id, label, atMs: Date.now() };
